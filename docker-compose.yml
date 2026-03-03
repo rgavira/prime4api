@@ -1,0 +1,9 @@
+services:
+  prime4api:
+    build: .
+    container_name: prime4api
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
