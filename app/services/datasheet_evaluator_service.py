@@ -46,12 +46,12 @@ class DatasheetEvaluatorService:
             
             if has_aliases:
                 aliases_to_process = {}
-                if request.reputation_state:
-                    if request.reputation_state in ep_config:
-                        aliases_to_process[request.reputation_state] = ep_config[request.reputation_state]
+                if request.alias:
+                    if request.alias in ep_config:
+                        aliases_to_process[request.alias] = ep_config[request.alias]
                     else:
                         valid_aliases = list(ep_config.keys())
-                        raise KeyError(f"Reputation '{request.reputation_state}' not found in endpoint '{ep_path}'. Valid aliases are: {valid_aliases}")
+                        raise KeyError(f"Alias '{request.alias}' not found in endpoint '{ep_path}'. Valid aliases are: {valid_aliases}")
                 else:
                     aliases_to_process = ep_config
                 
@@ -67,13 +67,13 @@ class DatasheetEvaluatorService:
                     )
                     results.append(EvaluateDatasheetResultItem(
                         endpoint=ep_path,
-                        reputation=alias_name,
+                        alias=alias_name,
                         result=res
                     ))
             else:
                 # Es un endpoint plano (sin aliases)
-                if request.reputation_state:
-                    raise ValueError(f"Endpoint '{ep_path}' has no sub-aliases, but a reputation was provided.")
+                if request.alias:
+                    raise ValueError(f"Endpoint '{ep_path}' has no sub-aliases, but an alias was provided.")
                 
                 res = self._process_node(
                     node_config=ep_config,
@@ -86,7 +86,7 @@ class DatasheetEvaluatorService:
                 )
                 results.append(EvaluateDatasheetResultItem(
                     endpoint=ep_path,
-                    reputation="default",
+                    alias="default",
                     result=res
                 ))
 

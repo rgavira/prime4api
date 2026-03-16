@@ -28,7 +28,7 @@ req2 = {
     "datasheet_source": yaml_text,
     "plan_name": "starter",
     "endpoint_path": "v1/email",
-    "reputation_state": "under_review_reputation",
+    "alias": "under_review_reputation",
     "operation": "min_time",
     "operation_params": {"capacity_goal": 10}
 }
