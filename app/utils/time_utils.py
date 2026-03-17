@@ -122,6 +122,7 @@ def parse_time_string_to_duration(time_string: str) -> TimeDuration:
         'year': TimeUnit.YEAR
     }
 
+    time_string = time_string.replace(" ", "")
     pattern = r'(\d+(\.\d+)?)(ms|s|min|h|day|week|month|year)'
     matches = re.findall(pattern, time_string)
 

@@ -1,1 +1,2 @@
 from .basic_operations_service import BasicOperationsService
+from .capacity_curve_service import CapacityCurveService
