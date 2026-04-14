@@ -15,7 +15,7 @@ from app.schemas.datasheet import (
     EvaluateDatasheetRequest,
 )
 from app.services.datasheet_evaluator_service import DatasheetEvaluatorService
-from .evaluate import load_yaml_source
+from app.utils.yaml_utils import load_yaml_source
 
 router = APIRouter()
 evaluator_service = DatasheetEvaluatorService()
@@ -42,7 +42,10 @@ def get_min_time(
         raw = evaluator_service.evaluate(yaml_data, _build_request(request, "min_time", {"capacity_goal": capacity_goal}))
         return DatasheetMinTimeResponse(
             capacity_goal=capacity_goal,
-            results=[DatasheetMinTimeResultItem(endpoint=r.endpoint, alias=r.alias, min_time=r.result) for r in raw],
+            results={
+                plan: [DatasheetMinTimeResultItem(endpoint=r.endpoint, alias=r.alias, min_time=r.result) for r in items]
+                for plan, items in raw.items()
+            },
         )
     except (ValueError, KeyError) as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -60,7 +63,10 @@ def get_capacity_at(
         raw = evaluator_service.evaluate(yaml_data, _build_request(request, "capacity_at", {"time": time}))
         return DatasheetCapacityAtResponse(
             time=time,
-            results=[DatasheetCapacityAtResultItem(endpoint=r.endpoint, alias=r.alias, capacity=r.result) for r in raw],
+            results={
+                plan: [DatasheetCapacityAtResultItem(endpoint=r.endpoint, alias=r.alias, capacity=r.result) for r in items]
+                for plan, items in raw.items()
+            },
         )
     except (ValueError, KeyError) as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -83,7 +89,10 @@ def get_capacity_during(
         return DatasheetCapacityDuringResponse(
             start_instant=start_instant,
             end_instant=end_instant,
-            results=[DatasheetCapacityDuringResultItem(endpoint=r.endpoint, alias=r.alias, capacity=r.result) for r in raw],
+            results={
+                plan: [DatasheetCapacityDuringResultItem(endpoint=r.endpoint, alias=r.alias, capacity=r.result) for r in items]
+                for plan, items in raw.items()
+            },
         )
     except (ValueError, KeyError) as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -97,10 +106,10 @@ def get_quota_exhaustion_threshold(request: DatasheetBaseRequest):
     try:
         raw = evaluator_service.evaluate(yaml_data, _build_request(request, "quota_exhaustion_threshold", {}))
         return DatasheetQuotaExhaustionResponse(
-            results=[
-                DatasheetQuotaExhaustionResultItem(endpoint=r.endpoint, alias=r.alias, thresholds=r.result)
-                for r in raw
-            ]
+            results={
+                plan: [DatasheetQuotaExhaustionResultItem(endpoint=r.endpoint, alias=r.alias, thresholds=r.result) for r in items]
+                for plan, items in raw.items()
+            }
         )
     except (ValueError, KeyError) as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -114,10 +123,10 @@ def get_idle_time_period(request: DatasheetBaseRequest):
     try:
         raw = evaluator_service.evaluate(yaml_data, _build_request(request, "idle_time_period", {}))
         return DatasheetIdleTimePeriodResponse(
-            results=[
-                DatasheetIdleTimePeriodResultItem(endpoint=r.endpoint, alias=r.alias, idle_times=r.result)
-                for r in raw
-            ]
+            results={
+                plan: [DatasheetIdleTimePeriodResultItem(endpoint=r.endpoint, alias=r.alias, idle_times=r.result) for r in items]
+                for plan, items in raw.items()
+            }
         )
     except (ValueError, KeyError) as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -131,7 +140,10 @@ def get_rates(request: DatasheetBaseRequest):
     try:
         raw = evaluator_service.evaluate(yaml_data, _build_request(request, "rates", {}))
         return DatasheetRatesResponse(
-            results=[DatasheetRatesResultItem(endpoint=r.endpoint, alias=r.alias, rates=r.result) for r in raw]
+            results={
+                plan: [DatasheetRatesResultItem(endpoint=r.endpoint, alias=r.alias, rates=r.result) for r in items]
+                for plan, items in raw.items()
+            }
         )
     except (ValueError, KeyError) as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -145,7 +157,10 @@ def get_quotas(request: DatasheetBaseRequest):
     try:
         raw = evaluator_service.evaluate(yaml_data, _build_request(request, "quotas", {}))
         return DatasheetQuotasResponse(
-            results=[DatasheetQuotasResultItem(endpoint=r.endpoint, alias=r.alias, quotas=r.result) for r in raw]
+            results={
+                plan: [DatasheetQuotasResultItem(endpoint=r.endpoint, alias=r.alias, quotas=r.result) for r in items]
+                for plan, items in raw.items()
+            }
         )
     except (ValueError, KeyError) as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -158,16 +173,20 @@ def get_limits(request: DatasheetBaseRequest):
     yaml_data = load_yaml_source(request.datasheet_source)
     try:
         raw = evaluator_service.evaluate(yaml_data, _build_request(request, "limits", {}))
-        results = []
-        for r in raw:
-            limits = r.result  # List[Rate | Quota]
-            results.append(DatasheetLimitsResultItem(
-                endpoint=r.endpoint,
-                alias=r.alias,
-                rates=[l for l in limits if isinstance(l, Rate)],
-                quotas=[l for l in limits if isinstance(l, Quota)],
-            ))
-        return DatasheetLimitsResponse(results=results)
+        return DatasheetLimitsResponse(
+            results={
+                plan: [
+                    DatasheetLimitsResultItem(
+                        endpoint=r.endpoint,
+                        alias=r.alias,
+                        rates=[l for l in r.result if isinstance(l, Rate)],
+                        quotas=[l for l in r.result if isinstance(l, Quota)],
+                    )
+                    for r in items
+                ]
+                for plan, items in raw.items()
+            }
+        )
     except (ValueError, KeyError) as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
