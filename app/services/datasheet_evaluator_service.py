@@ -135,9 +135,12 @@ class DatasheetEvaluatorService:
             raise ValueError(f"Neither rate nor quota could be resolved for node config: {node_config}")
 
         # Delegar el cálculo dinámico al BasicOperationsService
+        # Busca primero calculate_{op}, luego get_{op} (para rates/quotas/limits)
         method_name = f"calculate_{operation}"
         if not hasattr(self.basic_ops_service, method_name):
-            raise ValueError(f"Operation '{operation}' is not supported. Engine has no {method_name} method.")
+            method_name = f"get_{operation}"
+        if not hasattr(self.basic_ops_service, method_name):
+            raise ValueError(f"Operation '{operation}' is not supported. Engine has no calculate_{operation} or get_{operation} method.")
 
         method = getattr(self.basic_ops_service, method_name)
 

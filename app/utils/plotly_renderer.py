@@ -62,3 +62,48 @@ def render_capacity_curve_html(
     )
 
     return fig.to_html(full_html=True, include_plotlyjs="cdn")
+
+
+if __name__ == "__main__":
+    import os
+    import webbrowser
+    from app.models import Rate, Quota
+    from app.engine.evaluators.bounded_rate import BoundedRate
+    from app.engine.plotters.bounded_rate_plotter import BoundedRatePlotter
+    from app.utils.time_utils import parse_time_string_to_duration
+
+    # User's configuration
+    rate = Rate(value=120*70, unit="emails", period="1min")
+    quota = Quota(value=50000, unit="emails", period="1month")
+    quota_2 = Quota(value=100000*70, unit="emails", period="1day")
+    bounded_rate = BoundedRate(rate=rate, quota=[quota, quota_2])
+
+    workload = "1, 70 EMAILS  -> " 
+    # Time simulation length
+    time_sim = "3day"
+
+    print("Generating points with BoundedRatePlotter...")
+    plotter = BoundedRatePlotter(br=bounded_rate)
+    
+    # "show_capacity_from_inflection_points" corresponds to inflection_point_capacity_curve
+    points = plotter.accumulated_capacity_curve(time_sim)
+
+    # Automatically select a good unit for the x-axis divisor
+    # Let's just use 'day' for a 2 month simulation for simplicity
+    x_unit_label = "day"
+    x_scale_divisor = 86400000.0  # ms in a day
+
+    html = render_capacity_curve_html(
+        points=points,
+        title=f"Capacity Curve from Inflection Points ({time_sim})",
+        line_shape="hv",
+        x_unit_label=x_unit_label,
+        x_scale_divisor=x_scale_divisor
+    )
+
+    output_path = os.path.abspath("test_plot_output.html")
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(html)
+    
+    print(f"Plot saved to {output_path}")
+    webbrowser.open(f"file://{output_path}")
