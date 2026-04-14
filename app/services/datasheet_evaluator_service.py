@@ -45,6 +45,16 @@ class DatasheetEvaluatorService:
             period=self._normalize_period(q_def["period"])
         )
 
+    def _parse_rates(self, rate_def, max_power_defs: dict) -> List[Rate]:
+        """Acepta un string o una lista de strings y devuelve siempre List[Rate]."""
+        keys = rate_def if isinstance(rate_def, list) else [rate_def]
+        return [self._parse_rate(k, max_power_defs) for k in keys]
+
+    def _parse_quotas(self, quota_def, capacity_defs: dict) -> List[Quota]:
+        """Acepta un string o una lista de strings y devuelve siempre List[Quota]."""
+        keys = quota_def if isinstance(quota_def, list) else [quota_def]
+        return [self._parse_quota(k, capacity_defs) for k in keys]
+
     def _has_aliases(self, ep_config: dict) -> bool:
         """Detecta si un endpoint tiene aliases (sub-dicts que no son campos conocidos)."""
         if ep_config is None:
@@ -87,10 +97,10 @@ class DatasheetEvaluatorService:
         # Límites heredados del plan
         plan_rates: List[Rate] = []
         plan_quotas: List[Quota] = []
-        if plan_rate_key := plan_data.get("rate"):
-            plan_rates.append(self._parse_rate(plan_rate_key, max_power_defs))
-        if plan_quota_key := plan_data.get("quota"):
-            plan_quotas.append(self._parse_quota(plan_quota_key, capacity_defs))
+        if plan_rate_def := plan_data.get("rate"):
+            plan_rates.extend(self._parse_rates(plan_rate_def, max_power_defs))
+        if plan_quota_def := plan_data.get("quota"):
+            plan_quotas.extend(self._parse_quotas(plan_quota_def, capacity_defs))
 
         # Filtrar por endpoint_path si se pasa
         if request.endpoint_path:
@@ -109,10 +119,10 @@ class DatasheetEvaluatorService:
             # Límites a nivel de endpoint (pueden convivir con aliases en v0.3)
             ep_rates = list(plan_rates)
             ep_quotas = list(plan_quotas)
-            if ep_rate_key := ep_config.get("rate"):
-                ep_rates.append(self._parse_rate(ep_rate_key, max_power_defs))
-            if ep_quota_key := ep_config.get("quota"):
-                ep_quotas.append(self._parse_quota(ep_quota_key, capacity_defs))
+            if ep_rate_def := ep_config.get("rate"):
+                ep_rates.extend(self._parse_rates(ep_rate_def, max_power_defs))
+            if ep_quota_def := ep_config.get("quota"):
+                ep_quotas.extend(self._parse_quotas(ep_quota_def, capacity_defs))
 
             if self._has_aliases(ep_config):
                 # Endpoint con aliases — los campos conocidos son heredados, el resto son aliases
@@ -163,12 +173,12 @@ class DatasheetEvaluatorService:
                       operation: str, operation_params: dict) -> Any:
 
         rates: List[Rate] = list(inherited_rates)
-        if rate_key := node_config.get("rate"):
-            rates.append(self._parse_rate(rate_key, max_power_defs))
+        if rate_def := node_config.get("rate"):
+            rates.extend(self._parse_rates(rate_def, max_power_defs))
 
         quotas: List[Quota] = list(inherited_quotas)
-        if quota_key := node_config.get("quota"):
-            quotas.append(self._parse_quota(quota_key, capacity_defs))
+        if quota_def := node_config.get("quota"):
+            quotas.extend(self._parse_quotas(quota_def, capacity_defs))
 
         if not rates and not quotas:
             raise ValueError(f"Neither rate nor quota could be resolved for node config: {node_config}")
