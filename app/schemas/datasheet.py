@@ -4,6 +4,20 @@ from app.models import Rate, Quota
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Dimension result (one entry per unit-dimension × workload scenario)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class DimensionResult(BaseModel):
+    dimension: str
+    workload_factor: Optional[int] = None  # actual emails/req used; None when no workload
+    value: Any
+
+class CaseResult(BaseModel):
+    capacity_request_factor: Optional[int] = None
+    value: Any
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Base / evaluate (agente MCP)
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -40,33 +54,33 @@ class DatasheetBaseRequest(BaseModel):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Result items (un item por endpoint/alias)
+# Result items for calculation operations (return dimensions)
 # ──────────────────────────────────────────────────────────────────────────────
 
 class DatasheetMinTimeResultItem(BaseModel):
     endpoint: str
     alias: str
-    min_time: str
+    dimensions: Dict[str, List[CaseResult]]
 
 class DatasheetCapacityAtResultItem(BaseModel):
     endpoint: str
     alias: str
-    capacity: float
+    dimensions: Dict[str, List[CaseResult]]
 
 class DatasheetCapacityDuringResultItem(BaseModel):
     endpoint: str
     alias: str
-    capacity: float
+    dimensions: Dict[str, List[CaseResult]]
 
 class DatasheetQuotaExhaustionResultItem(BaseModel):
     endpoint: str
     alias: str
-    thresholds: List[Dict[str, Any]]
+    dimensions: Dict[str, List[CaseResult]]
 
 class DatasheetIdleTimePeriodResultItem(BaseModel):
     endpoint: str
     alias: str
-    idle_times: List[Dict[str, Any]]
+    dimensions: Dict[str, List[CaseResult]]
 
 class DatasheetRatesResultItem(BaseModel):
     endpoint: str
@@ -116,3 +130,24 @@ class DatasheetQuotasResponse(BaseModel):
 
 class DatasheetLimitsResponse(BaseModel):
     results: Dict[str, List[DatasheetLimitsResultItem]]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Capacity curves
+# ──────────────────────────────────────────────────────────────────────────────
+
+class DatasheetCurveSeries(BaseModel):
+    plan: str
+    endpoint: str
+    alias: str
+    dimension: str
+    capacity_request_factor: Optional[int] = None
+    rates: List[Rate] = Field(default_factory=list)
+    quotas: List[Quota] = Field(default_factory=list)
+    t_ms: List[float]
+    capacity: List[float]
+
+class DatasheetCurveDataResponse(BaseModel):
+    time_interval: str
+    curve_type: str   # "accumulated" | "inflection"
+    series: List[DatasheetCurveSeries]

@@ -28,10 +28,6 @@ class BoundedRate:
 
         for candidate in all_candidates[1:]:
             base = self.limits[0]
-            if candidate.value <= base.value:
-                print(f"[WARNING] Limit omitted (value <= base): {candidate}")
-                continue
-
             base_capacity = base.value * (
                 candidate.period.to_milliseconds() / base.period.to_milliseconds()
             )

@@ -51,25 +51,17 @@ class BasicOperationsService:
             raise ValueError(f"Error calculating quota_exhaustion_threshold: {str(e)}")
 
     def get_rates(self, rate: Optional[Union[Rate, List[Rate]]] = None, quota: Optional[Union[Quota, List[Quota]]] = None) -> List[Rate]:
-        try:
-            evaluator = BoundedRate(rate, quota)
-        except ValueError as e:
-            raise ValueError(f"Error creating BoundedRate: {str(e)}")
-        return evaluator.rates
+        # Devuelve todos los rates sin pasar por el filtro de BoundedRate,
+        # que asume unidades homogéneas y descartaría limits de unidades distintas.
+        return [rate] if isinstance(rate, Rate) else (rate or [])
 
     def get_quotas(self, rate: Optional[Union[Rate, List[Rate]]] = None, quota: Optional[Union[Quota, List[Quota]]] = None) -> List[Quota]:
-        try:
-            evaluator = BoundedRate(rate, quota)
-        except ValueError as e:
-            raise ValueError(f"Error creating BoundedRate: {str(e)}")
-        return evaluator.quotas
+        return [quota] if isinstance(quota, Quota) else (quota or [])
 
     def get_limits(self, rate: Optional[Union[Rate, List[Rate]]] = None, quota: Optional[Union[Quota, List[Quota]]] = None) -> list:
-        try:
-            evaluator = BoundedRate(rate, quota)
-        except ValueError as e:
-            raise ValueError(f"Error creating BoundedRate: {str(e)}")
-        return evaluator.limits
+        rates = [rate] if isinstance(rate, Rate) else (rate or [])
+        quotas = [quota] if isinstance(quota, Quota) else (quota or [])
+        return rates + quotas
 
     def calculate_idle_time_period(self, rate: Optional[Union[Rate, List[Rate]]] = None, quota: Optional[Union[Quota, List[Quota]]] = None) -> list:
         try:

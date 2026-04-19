@@ -3,6 +3,7 @@ from typing import Literal
 import plotly.graph_objects as go
 
 from app.engine.plotters.curve_models import CapacityCurvePoints
+from app.utils.time_utils import format_time_with_unit
 
 LineShape = Literal["hv", "linear"]
 # "hv"     → escalón (step function). Usar para accumulated_curve e inflection_point_curve.
@@ -62,6 +63,296 @@ def render_capacity_curve_html(
     )
 
     return fig.to_html(full_html=True, include_plotlyjs="cdn")
+
+
+def render_multi_curve_html(
+    series_list: list,
+    title: str,
+    line_shape: LineShape,
+    x_unit_label: str,
+    x_scale_divisor: float,
+) -> str:
+    """
+    Renders capacity curves with hierarchical navigation: Plan → Endpoint → Dimension → CRF grid.
+
+    Each item in series_list must have:
+      plan, endpoint, alias, dimension, crf (int|None), t_ms, capacity.
+    Legacy items without plan/endpoint/alias are also accepted (grouped as "default").
+    """
+    if not series_list:
+        raise ValueError("No series to render.")
+
+    # ── Build hierarchy: plan → endpoint_key → dimension → [series] ──────────
+    # endpoint_key includes alias when it's not "default"
+    hierarchy: dict = {}
+    for s in series_list:
+        plan     = s.get("plan", "default")
+        ep       = s.get("endpoint", "endpoint")
+        alias    = s.get("alias", "default")
+        ep_key   = ep if alias == "default" else f"{ep} [{alias}]"
+        dim      = s["dimension"]
+        hierarchy.setdefault(plan, {}).setdefault(ep_key, {}).setdefault(dim, []).append(s)
+
+    plans = list(hierarchy.keys())
+
+    def _esc(s: str) -> str:
+        return s.replace("'", "\\'").replace("/", "_").replace(" ", "_").replace("[", "_").replace("]", "_")
+
+    def _fmt_limit(lim) -> str:
+        period_str = format_time_with_unit(lim.period) if hasattr(lim.period, "to_milliseconds") else str(lim.period)
+        return f"{lim.value:,} {lim.unit} / {period_str}"
+
+    def _limits_panel(s: dict) -> str:
+        rows = ""
+        for r in s.get("rates", []):
+            rows += f'<tr><td class="lk">rate</td><td class="lv">{_fmt_limit(r)}</td></tr>'
+        for q in s.get("quotas", []):
+            rows += f'<tr><td class="lk">quota</td><td class="lv">{_fmt_limit(q)}</td></tr>'
+        if not rows:
+            return ""
+        return (
+            '<div class="limits-panel">'
+            '<div class="lp-title">Active limits</div>'
+            f'<table><tbody>{rows}</tbody></table>'
+            '</div>'
+        )
+
+    def _chart_div(s: dict) -> str:
+        xs = [t / x_scale_divisor for t in s["t_ms"]]
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=xs,
+            y=s["capacity"],
+            mode="lines",
+            line=dict(color="green", shape=line_shape, width=1.5),
+            fill="tozeroy",
+            fillcolor="rgba(0, 128, 0, 0.2)",
+            name="Capacity",
+        ))
+        crf_label = f"CRF = {s['crf']}" if s.get("crf") is not None else "fixed"
+        fig.update_layout(
+            title=dict(text=crf_label, font=dict(size=14)),
+            xaxis_title=f"Time ({x_unit_label})",
+            yaxis_title="Capacity",
+            showlegend=False,
+            template="plotly_white",
+            width=780,
+            height=480,
+            margin=dict(t=60, b=60, l=70, r=30),
+        )
+        chart_html = fig.to_html(full_html=False, include_plotlyjs=False)
+        panel_html = _limits_panel(s)
+        return (
+            f'<div style="display:flex;align-items:flex-start;gap:12px">'
+            f'  <div>{chart_html}</div>'
+            f'  {panel_html}'
+            f'</div>'
+        )
+
+    LEVEL_COLORS = ["#2e7d32", "#1565c0", "#6a1b9a", "#e65100"]
+    _SCENARIO_PALETTE = [
+        ("#d32f2f", "rgba(211,47,47,0.12)"),
+        ("#f57c00", "rgba(245,124,0,0.12)"),
+        ("#2e7d32", "rgba(46,125,50,0.15)"),
+        ("#1565c0", "rgba(21,101,192,0.12)"),
+        ("#6a1b9a", "rgba(106,27,154,0.12)"),
+    ]
+
+    def _combined_chart_div(series: list) -> str:
+        fig = go.Figure()
+        for idx, s in enumerate(series):
+            line_color, fill_color = _SCENARIO_PALETTE[idx % len(_SCENARIO_PALETTE)]
+            crf_val = s.get("crf")
+            trace_name = f"CRF = {crf_val}" if crf_val is not None else "fixed"
+            xs = [t / x_scale_divisor for t in s["t_ms"]]
+            fig.add_trace(go.Scatter(
+                x=xs,
+                y=s["capacity"],
+                mode="lines",
+                name=trace_name,
+                line=dict(color=line_color, shape=line_shape, width=2),
+                fill="tozeroy",
+                fillcolor=fill_color,
+            ))
+        fig.update_layout(
+            title=dict(text="All scenarios", font=dict(size=14)),
+            xaxis_title=f"Time ({x_unit_label})",
+            yaxis_title="Capacity",
+            showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            template="plotly_white",
+            width=820,
+            height=480,
+            margin=dict(t=80, b=60, l=70, r=30),
+        )
+        return fig.to_html(full_html=False, include_plotlyjs=False)
+
+    def _btn(label: str, onclick: str, active: bool, level: int, extra_id: str = "") -> str:
+        color = LEVEL_COLORS[min(level, 3)]
+        active_style = f"font-weight:bold;border-bottom:3px solid {color};color:{color};"
+        base_style   = ("margin:3px;padding:5px 14px;font-size:13px;cursor:pointer;"
+                        "background:#fff;border:1px solid #ddd;border-radius:4px;transition:all .15s;")
+        id_attr = f'id="{extra_id}"' if extra_id else ""
+        return f'<button {id_attr} onclick="{onclick}" style="{base_style}{active_style if active else ""}">{label}</button>'
+
+    # ── HTML generation ───────────────────────────────────────────────────────
+    body = ""
+    for pi, plan in enumerate(plans):
+        plan_id = f"plan_{_esc(plan)}"
+        plan_display = "block" if pi == 0 else "none"
+        eps = list(hierarchy[plan].keys())
+
+        ep_buttons = "".join(
+            _btn(ep_key, f"showEp('{plan_id}','{_esc(ep_key)}')", i == 0, 1,
+                 extra_id=f"{plan_id}_epbtn_{_esc(ep_key)}")
+            for i, ep_key in enumerate(eps)
+        )
+
+        ep_sections = ""
+        for ei, ep_key in enumerate(eps):
+            ep_id = f"{plan_id}_ep_{_esc(ep_key)}"
+            ep_display = "block" if ei == 0 else "none"
+            dims = list(hierarchy[plan][ep_key].keys())
+
+            dim_buttons = "".join(
+                _btn(dim, f"showDim('{ep_id}','{_esc(dim)}')", i == 0, 2,
+                     extra_id=f"{ep_id}_dimbtn_{_esc(dim)}")
+                for i, dim in enumerate(dims)
+            )
+
+            dim_sections = ""
+            for di, dim in enumerate(dims):
+                dim_id = f"{ep_id}_dim_{_esc(dim)}"
+                dim_display = "block" if di == 0 else "none"
+                series_for_dim = hierarchy[plan][ep_key][dim]
+
+                # CRF-level navigation: overview + individual charts
+                multi = len(series_for_dim) > 1
+
+                if multi:
+                    overview_btn = _btn("Overview", f"showCrf('{dim_id}','ov')", True, 3,
+                                        extra_id=f"{dim_id}_crfbtn_ov")
+                    indiv_btns = "".join(
+                        _btn(
+                            f"CRF = {s['crf']}" if s.get("crf") is not None else "fixed",
+                            f"showCrf('{dim_id}',{ci})",
+                            False,
+                            3,
+                            extra_id=f"{dim_id}_crfbtn_{ci}",
+                        )
+                        for ci, s in enumerate(series_for_dim)
+                    )
+                    crf_buttons = overview_btn + indiv_btns
+                else:
+                    crf_buttons = ""
+
+                overview_div = (
+                    f'<div id="{dim_id}_crf_ov" class="{dim_id}_crf" style="display:block">'
+                    f'{_combined_chart_div(series_for_dim)}</div>'
+                    if multi else ""
+                )
+
+                crf_charts = overview_div + "".join(
+                    f'<div id="{dim_id}_crf_{ci}" class="{dim_id}_crf" style="display:none">'
+                    f'{_chart_div(s)}</div>'
+                    for ci, s in enumerate(series_for_dim)
+                )
+
+                crf_nav = (
+                    f'<div class="nav-row"><div class="nav-label">Workload (CRF)</div>{crf_buttons}</div>'
+                    if multi else ""
+                )
+
+                dim_sections += (
+                    f'<div id="{dim_id}" class="{ep_id}_dim" style="display:{dim_display}">'
+                    f'{crf_nav}{crf_charts}</div>'
+                )
+
+            ep_sections += (
+                f'<div id="{ep_id}" class="{plan_id}_ep" style="display:{ep_display}">'
+                f'<div class="nav-row"><div class="nav-label">Dimension</div>{dim_buttons}</div>'
+                f'{dim_sections}</div>'
+            )
+
+        body += (
+            f'<div id="{plan_id}" class="plan-section" style="display:{plan_display}">'
+            f'<div class="nav-row"><div class="nav-label">Endpoint</div>{ep_buttons}</div>'
+            f'{ep_sections}</div>'
+        )
+
+    plan_buttons = "".join(
+        _btn(plan, f"showPlan('{_esc(plan)}')", i == 0, 0,
+             extra_id=f"planbtn_{_esc(plan)}")
+        for i, plan in enumerate(plans)
+    )
+
+    js = """
+function _updateBtns(prefix, activeKey, color) {
+    document.querySelectorAll('[id^="' + prefix + '"]').forEach(function(btn) {
+        var isActive = btn.id === prefix + activeKey;
+        btn.style.fontWeight = isActive ? 'bold' : 'normal';
+        btn.style.borderBottom = isActive ? '3px solid ' + color : 'none';
+        btn.style.color = isActive ? color : '';
+    });
+}
+function showPlan(planKey) {
+    document.querySelectorAll('.plan-section').forEach(el => el.style.display = 'none');
+    document.getElementById('plan_' + planKey).style.display = 'block';
+    _updateBtns('planbtn_', planKey, '#2e7d32');
+}
+function showEp(planId, epKey) {
+    document.querySelectorAll('.' + planId + '_ep').forEach(el => el.style.display = 'none');
+    document.getElementById(planId + '_ep_' + epKey).style.display = 'block';
+    _updateBtns(planId + '_epbtn_', epKey, '#1565c0');
+}
+function showDim(epId, dimKey) {
+    document.querySelectorAll('.' + epId + '_dim').forEach(el => el.style.display = 'none');
+    document.getElementById(epId + '_dim_' + dimKey).style.display = 'block';
+    _updateBtns(epId + '_dimbtn_', dimKey, '#6a1b9a');
+}
+function showCrf(dimId, key) {
+    document.querySelectorAll('.' + dimId + '_crf').forEach(el => el.style.display = 'none');
+    document.getElementById(dimId + '_crf_' + key).style.display = 'block';
+    _updateBtns(dimId + '_crfbtn_', String(key), '#e65100');
+}
+"""
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{title}</title>
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <style>
+    body {{ font-family: sans-serif; margin: 0; padding: 16px; background: #fafafa; }}
+    h2 {{ margin: 8px 0 14px; font-size: 20px; color: #222; }}
+    .nav-row {{ margin: 4px 0 8px; padding: 6px 10px; background: #f0f0f0;
+                border-radius: 6px; border-left: 3px solid #ccc; }}
+    .nav-label {{ font-size: 10px; color: #999; font-weight: bold; letter-spacing: .8px;
+                  text-transform: uppercase; margin-bottom: 4px; }}
+    .limits-panel {{
+      min-width: 190px; padding: 10px 14px; background: #fff;
+      border: 1px solid #e0e0e0; border-radius: 6px; font-size: 12px;
+      align-self: center;
+    }}
+    .lp-title {{ font-weight: bold; color: #555; margin-bottom: 8px;
+                 font-size: 10px; text-transform: uppercase; letter-spacing: .8px; }}
+    .limits-panel table {{ border-collapse: collapse; width: 100%; }}
+    .limits-panel tr + tr td {{ padding-top: 5px; }}
+    .lk {{ color: #999; padding-right: 10px; white-space: nowrap; vertical-align: top; font-size: 10px; text-transform: uppercase; }}
+    .lv {{ color: #222; font-family: monospace; font-size: 12px; }}
+  </style>
+</head>
+<body>
+  <h2>{title}</h2>
+  <div class="nav-row">
+    <div class="nav-label">Plan</div>
+    {plan_buttons}
+  </div>
+  {body}
+  <script>{js}</script>
+</body>
+</html>"""
 
 
 if __name__ == "__main__":
