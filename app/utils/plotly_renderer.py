@@ -73,27 +73,37 @@ def render_multi_curve_html(
     x_scale_divisor: float,
 ) -> str:
     """
-    Renders capacity curves with hierarchical navigation: Plan → Endpoint → Dimension → CRF grid.
-
-    Each item in series_list must have:
-      plan, endpoint, alias, dimension, crf (int|None), t_ms, capacity.
-    Legacy items without plan/endpoint/alias are also accepted (grouped as "default").
+    Renders capacity curves with hierarchical navigation:
+      Plan → Endpoint → Dimension (workload units only) → CRF
+    When an endpoint has multiple workload units a "Combined" tab is added
+    showing all units side by side with independent CRF selectors.
     """
     if not series_list:
         raise ValueError("No series to render.")
 
-    # ── Build hierarchy: plan → endpoint_key → dimension → [series] ──────────
-    # endpoint_key includes alias when it's not "default"
-    hierarchy: dict = {}
-    for s in series_list:
-        plan     = s.get("plan", "default")
-        ep       = s.get("endpoint", "endpoint")
-        alias    = s.get("alias", "default")
-        ep_key   = ep if alias == "default" else f"{ep} [{alias}]"
-        dim      = s["dimension"]
-        hierarchy.setdefault(plan, {}).setdefault(ep_key, {}).setdefault(dim, []).append(s)
+    # ── Build hierarchies ─────────────────────────────────────────────────────
+    # display_hier: plan → ep_key → dim → [series]  (only visible dimensions)
+    # combined_hier: plan → ep_key → wl_unit → [series]  (for Combined tab)
+    display_hier: dict = {}
+    combined_hier: dict = {}
 
-    plans = list(hierarchy.keys())
+    for s in series_list:
+        plan    = s.get("plan", "default")
+        ep      = s.get("endpoint", "endpoint")
+        alias   = s.get("alias", "default")
+        ep_key  = ep if alias == "default" else f"{ep} [{alias}]"
+        wl_unit = s.get("workload_unit")
+        dim     = s["dimension"]
+
+        # Hide "requests" dimensions derived from a workload — only show wl_unit dims
+        if dim == "requests" and wl_unit:
+            continue
+
+        display_hier.setdefault(plan, {}).setdefault(ep_key, {}).setdefault(dim, []).append(s)
+        if wl_unit:
+            combined_hier.setdefault(plan, {}).setdefault(ep_key, {}).setdefault(wl_unit, []).append(s)
+
+    plans = list(display_hier.keys())
 
     def _esc(s: str) -> str:
         return s.replace("'", "\\'").replace("/", "_").replace(" ", "_").replace("[", "_").replace("]", "_")
@@ -121,12 +131,10 @@ def render_multi_curve_html(
         xs = [t / x_scale_divisor for t in s["t_ms"]]
         fig = go.Figure()
         fig.add_trace(go.Scatter(
-            x=xs,
-            y=s["capacity"],
+            x=xs, y=s["capacity"],
             mode="lines",
             line=dict(color="green", shape=line_shape, width=1.5),
-            fill="tozeroy",
-            fillcolor="rgba(0, 128, 0, 0.2)",
+            fill="tozeroy", fillcolor="rgba(0, 128, 0, 0.2)",
             name="Capacity",
         ))
         crf_label = f"CRF = {s['crf']}" if s.get("crf") is not None else "fixed"
@@ -136,18 +144,18 @@ def render_multi_curve_html(
             yaxis_title="Capacity",
             showlegend=False,
             template="plotly_white",
-            width=780,
-            height=480,
+            autosize=True, height=460,
             margin=dict(t=60, b=60, l=70, r=30),
         )
-        chart_html = fig.to_html(full_html=False, include_plotlyjs=False)
+        chart_html = fig.to_html(full_html=False, include_plotlyjs=False, config={"responsive": True})
         panel_html = _limits_panel(s)
-        return (
-            f'<div style="display:flex;align-items:flex-start;gap:12px">'
-            f'  <div>{chart_html}</div>'
-            f'  {panel_html}'
-            f'</div>'
-        )
+        if panel_html:
+            return (
+                f'<div style="display:flex;align-items:flex-start;gap:12px">'
+                f'<div style="flex-shrink:0;width:820px">{chart_html}</div>'
+                f'{panel_html}</div>'
+            )
+        return f'<div style="max-width:860px">{chart_html}</div>'
 
     LEVEL_COLORS = ["#2e7d32", "#1565c0", "#6a1b9a", "#e65100"]
     _SCENARIO_PALETTE = [
@@ -161,18 +169,15 @@ def render_multi_curve_html(
     def _combined_chart_div(series: list) -> str:
         fig = go.Figure()
         for idx, s in enumerate(series):
-            line_color, fill_color = _SCENARIO_PALETTE[idx % len(_SCENARIO_PALETTE)]
+            lc, fc = _SCENARIO_PALETTE[idx % len(_SCENARIO_PALETTE)]
             crf_val = s.get("crf")
             trace_name = f"CRF = {crf_val}" if crf_val is not None else "fixed"
             xs = [t / x_scale_divisor for t in s["t_ms"]]
             fig.add_trace(go.Scatter(
-                x=xs,
-                y=s["capacity"],
-                mode="lines",
-                name=trace_name,
-                line=dict(color=line_color, shape=line_shape, width=2),
-                fill="tozeroy",
-                fillcolor=fill_color,
+                x=xs, y=s["capacity"],
+                mode="lines", name=trace_name,
+                line=dict(color=lc, shape=line_shape, width=2),
+                fill="tozeroy", fillcolor=fc,
             ))
         fig.update_layout(
             title=dict(text="All scenarios", font=dict(size=14)),
@@ -181,11 +186,11 @@ def render_multi_curve_html(
             showlegend=True,
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
             template="plotly_white",
-            width=820,
-            height=480,
+            autosize=True, height=460,
             margin=dict(t=80, b=60, l=70, r=30),
         )
-        return fig.to_html(full_html=False, include_plotlyjs=False)
+        html = fig.to_html(full_html=False, include_plotlyjs=False, config={"responsive": True})
+        return f'<div style="max-width:860px">{html}</div>'
 
     def _btn(label: str, onclick: str, active: bool, level: int, extra_id: str = "") -> str:
         color = LEVEL_COLORS[min(level, 3)]
@@ -195,12 +200,110 @@ def render_multi_curve_html(
         id_attr = f'id="{extra_id}"' if extra_id else ""
         return f'<button {id_attr} onclick="{onclick}" style="{base_style}{active_style if active else ""}">{label}</button>'
 
-    # ── HTML generation ───────────────────────────────────────────────────────
+    def _crf_section(dim_id: str, series_for_dim: list) -> str:
+        multi = len(series_for_dim) > 1
+        if multi:
+            overview_btn = _btn("Overview", f"showCrf('{dim_id}','ov')", True, 3,
+                                extra_id=f"{dim_id}_crfbtn_ov")
+            indiv_btns = "".join(
+                _btn(
+                    f"CRF = {s['crf']}" if s.get("crf") is not None else "fixed",
+                    f"showCrf('{dim_id}',{ci})", False, 3,
+                    extra_id=f"{dim_id}_crfbtn_{ci}",
+                )
+                for ci, s in enumerate(series_for_dim)
+            )
+            crf_nav = (
+                f'<div class="nav-row"><div class="nav-label">Workload (CRF)</div>'
+                f'{overview_btn}{indiv_btns}</div>'
+            )
+            overview_div = (
+                f'<div id="{dim_id}_crf_ov" class="{dim_id}_crf" style="display:block">'
+                f'{_combined_chart_div(series_for_dim)}</div>'
+            )
+            indiv_divs = "".join(
+                f'<div id="{dim_id}_crf_{ci}" class="{dim_id}_crf" style="display:none">'
+                f'{_chart_div(s)}</div>'
+                for ci, s in enumerate(series_for_dim)
+            )
+            return crf_nav + overview_div + indiv_divs
+        else:
+            return (
+                f'<div id="{dim_id}_crf_0" class="{dim_id}_crf" style="display:block">'
+                f'{_chart_div(series_for_dim[0])}</div>'
+            )
+
+    def _combined_tab_section(ep_id: str, wl_units_dict: dict) -> str:
+        """
+        Single overlaid Plotly chart with all workload units.
+        CRF selectors per unit toggle trace visibility via Plotly.restyle.
+        """
+        div_id = f"{ep_id}_comb_chart"
+        fig = go.Figure()
+        trace_idx = 0
+
+        controls = '<div style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:4px">'
+        for unit_i, (wl_unit, series) in enumerate(wl_units_dict.items()):
+            unit_esc = _esc(wl_unit)
+            unit_indices = list(range(trace_idx, trace_idx + len(series)))
+
+            for ci, s in enumerate(series):
+                lc, fc = _SCENARIO_PALETTE[(unit_i * 3 + ci) % len(_SCENARIO_PALETTE)]
+                crf_val = s.get("crf")
+                trace_name = f"{wl_unit} CRF={crf_val}" if crf_val is not None else wl_unit
+                xs = [t / x_scale_divisor for t in s["t_ms"]]
+                fig.add_trace(go.Scatter(
+                    x=xs, y=s["capacity"],
+                    mode="lines", name=trace_name,
+                    line=dict(color=lc, shape=line_shape, width=2),
+                    fill="tozeroy", fillcolor=fc,
+                    visible=(ci == 0),
+                ))
+            trace_idx += len(series)
+
+            if len(series) > 1:
+                btns = "".join(
+                    _btn(
+                        f"CRF = {s['crf']}" if s.get("crf") is not None else "fixed",
+                        f"showCombOverlay('{div_id}',{unit_indices},{ci},'{ep_id}','{unit_esc}')",
+                        ci == 0, 3,
+                        extra_id=f"comb_{ep_id}_{unit_esc}_btn_{ci}",
+                    )
+                    for ci, s in enumerate(series)
+                )
+                controls += (
+                    f'<div class="nav-row" style="flex:none">'
+                    f'<div class="nav-label">{wl_unit} — CRF</div>{btns}</div>'
+                )
+            else:
+                controls += (
+                    f'<div class="nav-row" style="flex:none">'
+                    f'<div class="nav-label">{wl_unit} (fixed)</div></div>'
+                )
+        controls += '</div>'
+
+        fig.update_layout(
+            title=dict(text="Combined view", font=dict(size=14)),
+            xaxis_title=f"Time ({x_unit_label})",
+            yaxis_title="Capacity",
+            showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            template="plotly_white",
+            autosize=True, height=460,
+            margin=dict(t=80, b=60, l=70, r=30),
+        )
+        chart_html = fig.to_html(
+            full_html=False, include_plotlyjs=False,
+            config={"responsive": True}, div_id=div_id,
+        )
+        return controls + f'<div style="max-width:860px">{chart_html}</div>'
+
+    # ── HTML body generation ──────────────────────────────────────────────────
     body = ""
     for pi, plan in enumerate(plans):
         plan_id = f"plan_{_esc(plan)}"
         plan_display = "block" if pi == 0 else "none"
-        eps = list(hierarchy[plan].keys())
+        eps = list(display_hier[plan].keys())
 
         ep_buttons = "".join(
             _btn(ep_key, f"showEp('{plan_id}','{_esc(ep_key)}')", i == 0, 1,
@@ -212,60 +315,31 @@ def render_multi_curve_html(
         for ei, ep_key in enumerate(eps):
             ep_id = f"{plan_id}_ep_{_esc(ep_key)}"
             ep_display = "block" if ei == 0 else "none"
-            dims = list(hierarchy[plan][ep_key].keys())
+            dims = list(display_hier[plan][ep_key].keys())
+            ep_combined = combined_hier.get(plan, {}).get(ep_key, {})
+            has_combined = len(ep_combined) >= 2
+            all_dim_tabs = dims + (["Combined"] if has_combined else [])
 
             dim_buttons = "".join(
                 _btn(dim, f"showDim('{ep_id}','{_esc(dim)}')", i == 0, 2,
                      extra_id=f"{ep_id}_dimbtn_{_esc(dim)}")
-                for i, dim in enumerate(dims)
+                for i, dim in enumerate(all_dim_tabs)
             )
 
             dim_sections = ""
             for di, dim in enumerate(dims):
                 dim_id = f"{ep_id}_dim_{_esc(dim)}"
                 dim_display = "block" if di == 0 else "none"
-                series_for_dim = hierarchy[plan][ep_key][dim]
-
-                # CRF-level navigation: overview + individual charts
-                multi = len(series_for_dim) > 1
-
-                if multi:
-                    overview_btn = _btn("Overview", f"showCrf('{dim_id}','ov')", True, 3,
-                                        extra_id=f"{dim_id}_crfbtn_ov")
-                    indiv_btns = "".join(
-                        _btn(
-                            f"CRF = {s['crf']}" if s.get("crf") is not None else "fixed",
-                            f"showCrf('{dim_id}',{ci})",
-                            False,
-                            3,
-                            extra_id=f"{dim_id}_crfbtn_{ci}",
-                        )
-                        for ci, s in enumerate(series_for_dim)
-                    )
-                    crf_buttons = overview_btn + indiv_btns
-                else:
-                    crf_buttons = ""
-
-                overview_div = (
-                    f'<div id="{dim_id}_crf_ov" class="{dim_id}_crf" style="display:block">'
-                    f'{_combined_chart_div(series_for_dim)}</div>'
-                    if multi else ""
-                )
-
-                crf_charts = overview_div + "".join(
-                    f'<div id="{dim_id}_crf_{ci}" class="{dim_id}_crf" style="display:none">'
-                    f'{_chart_div(s)}</div>'
-                    for ci, s in enumerate(series_for_dim)
-                )
-
-                crf_nav = (
-                    f'<div class="nav-row"><div class="nav-label">Workload (CRF)</div>{crf_buttons}</div>'
-                    if multi else ""
-                )
-
                 dim_sections += (
                     f'<div id="{dim_id}" class="{ep_id}_dim" style="display:{dim_display}">'
-                    f'{crf_nav}{crf_charts}</div>'
+                    f'{_crf_section(dim_id, display_hier[plan][ep_key][dim])}</div>'
+                )
+
+            if has_combined:
+                combined_dim_id = f"{ep_id}_dim_Combined"
+                dim_sections += (
+                    f'<div id="{combined_dim_id}" class="{ep_id}_dim" style="display:none">'
+                    f'{_combined_tab_section(ep_id, ep_combined)}</div>'
                 )
 
             ep_sections += (
@@ -287,6 +361,11 @@ def render_multi_curve_html(
     )
 
     js = """
+function _relayout() {
+    document.querySelectorAll('.js-plotly-plot').forEach(function(el) {
+        if (el.offsetParent !== null) { Plotly.Plots.resize(el); }
+    });
+}
 function _updateBtns(prefix, activeKey, color) {
     document.querySelectorAll('[id^="' + prefix + '"]').forEach(function(btn) {
         var isActive = btn.id === prefix + activeKey;
@@ -299,21 +378,31 @@ function showPlan(planKey) {
     document.querySelectorAll('.plan-section').forEach(el => el.style.display = 'none');
     document.getElementById('plan_' + planKey).style.display = 'block';
     _updateBtns('planbtn_', planKey, '#2e7d32');
+    _relayout();
 }
 function showEp(planId, epKey) {
     document.querySelectorAll('.' + planId + '_ep').forEach(el => el.style.display = 'none');
     document.getElementById(planId + '_ep_' + epKey).style.display = 'block';
     _updateBtns(planId + '_epbtn_', epKey, '#1565c0');
+    _relayout();
 }
 function showDim(epId, dimKey) {
     document.querySelectorAll('.' + epId + '_dim').forEach(el => el.style.display = 'none');
     document.getElementById(epId + '_dim_' + dimKey).style.display = 'block';
     _updateBtns(epId + '_dimbtn_', dimKey, '#6a1b9a');
+    _relayout();
 }
 function showCrf(dimId, key) {
     document.querySelectorAll('.' + dimId + '_crf').forEach(el => el.style.display = 'none');
     document.getElementById(dimId + '_crf_' + key).style.display = 'block';
     _updateBtns(dimId + '_crfbtn_', String(key), '#e65100');
+    _relayout();
+}
+function showCombOverlay(divId, unitIndices, selectedIdx, epId, unitEsc) {
+    var vis = unitIndices.map(function(_, ci) { return ci === selectedIdx; });
+    Plotly.restyle(divId, {visible: vis}, unitIndices);
+    _updateBtns('comb_' + epId + '_' + unitEsc + '_btn_', String(selectedIdx), '#e65100');
+    _relayout();
 }
 """
 

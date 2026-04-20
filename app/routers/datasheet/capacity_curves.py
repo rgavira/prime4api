@@ -60,15 +60,16 @@ def _render_chart(base, time_interval, capacity_unit, capacity_request_factor, c
 
     series_list = [
         {
-            "plan":      s.plan,
-            "endpoint":  s.endpoint,
-            "alias":     s.alias,
-            "dimension": s.dimension,
-            "crf":       s.capacity_request_factor,
-            "rates":     s.rates,
-            "quotas":    s.quotas,
-            "t_ms":      s.t_ms,
-            "capacity":  s.capacity,
+            "plan":          s.plan,
+            "endpoint":      s.endpoint,
+            "alias":         s.alias,
+            "dimension":     s.dimension,
+            "workload_unit": s.workload_unit,
+            "crf":           s.capacity_request_factor,
+            "rates":         s.rates,
+            "quotas":        s.quotas,
+            "t_ms":          s.t_ms,
+            "capacity":      s.capacity,
         }
         for s in data.series
     ]
@@ -99,6 +100,7 @@ def _render_data(base, time_interval, capacity_unit, capacity_request_factor, cu
                 endpoint=sc["endpoint"],
                 alias=sc["alias"],
                 dimension=sc["dimension"],
+                workload_unit=sc.get("workload_unit"),
                 capacity_request_factor=sc["crf"],
                 rates=sc["rates"],
                 quotas=sc["quotas"],
@@ -125,7 +127,7 @@ def get_accumulated_data(
     request: DatasheetBaseRequest,
     time_interval: str = Query(..., **_CURVE_QUERY),
     capacity_unit: Optional[str] = Query(None, **_UNIT_QUERY),
-    capacity_request_factor: Optional[int] = Query(None, **_CRF_QUERY),
+    capacity_request_factor: Optional[float] = Query(None, **_CRF_QUERY),
 ):
     try:
         return _render_data(request, time_interval, capacity_unit, capacity_request_factor, "accumulated")
@@ -141,7 +143,7 @@ def get_inflection_data(
     request: DatasheetBaseRequest,
     time_interval: str = Query(..., **_CURVE_QUERY),
     capacity_unit: Optional[str] = Query(None, **_UNIT_QUERY),
-    capacity_request_factor: Optional[int] = Query(None, **_CRF_QUERY),
+    capacity_request_factor: Optional[float] = Query(None, **_CRF_QUERY),
 ):
     try:
         return _render_data(request, time_interval, capacity_unit, capacity_request_factor, "inflection")
@@ -164,7 +166,7 @@ def get_accumulated_chart(
     request: DatasheetBaseRequest,
     time_interval: str = Query(..., **_CURVE_QUERY),
     capacity_unit: Optional[str] = Query(None, **_UNIT_QUERY),
-    capacity_request_factor: Optional[int] = Query(None, **_CRF_QUERY),
+    capacity_request_factor: Optional[float] = Query(None, **_CRF_QUERY),
 ):
     try:
         html = _render_chart(request, time_interval, capacity_unit, capacity_request_factor, "accumulated", "hv")
@@ -184,7 +186,7 @@ def get_inflection_chart(
     request: DatasheetBaseRequest,
     time_interval: str = Query(..., **_CURVE_QUERY),
     capacity_unit: Optional[str] = Query(None, **_UNIT_QUERY),
-    capacity_request_factor: Optional[int] = Query(None, **_CRF_QUERY),
+    capacity_request_factor: Optional[float] = Query(None, **_CRF_QUERY),
 ):
     try:
         html = _render_chart(request, time_interval, capacity_unit, capacity_request_factor, "inflection", "linear")

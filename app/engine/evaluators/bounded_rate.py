@@ -102,9 +102,7 @@ class BoundedRate:
         return capacity_at_end - capacity_at_start
 
 
-    def min_time(self, capacity_goal: int, return_unit: Optional[TimeUnit] = None, display=True) -> Union[str, TimeDuration]:
-        if not isinstance(capacity_goal, int):
-            raise TypeError("capacity_goal must be an integer number of requests")
+    def min_time(self, capacity_goal: Union[int, float], return_unit: Optional[TimeUnit] = None, display=True) -> Union[str, TimeDuration]:
         if capacity_goal < 0:
             raise ValueError("The 'capacity goal' should be greater or equal to 0.")
 
@@ -113,7 +111,7 @@ class BoundedRate:
             if capacity_goal <= 0:
                 break
             nu = np.floor(capacity_goal / limit.value)
-            delta = (capacity_goal == nu * limit.value)
+            delta = abs(capacity_goal - nu * limit.value) < 1e-9
             n_i = int(nu - 1 if delta else nu)
             T += n_i * limit.period.to_milliseconds()
             capacity_goal -= n_i * limit.value

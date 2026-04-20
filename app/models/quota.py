@@ -21,7 +21,7 @@ PydanticTimeDuration = Annotated[
 ]
 
 class Quota(BaseModel):
-    value: int
+    value: float
     unit: str
     period: PydanticTimeDuration
 

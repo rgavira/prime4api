@@ -33,7 +33,7 @@ class DatasheetEvaluatorService:
             raise KeyError(f"Rate definition '{rate_key}' not found in max_power definitions.")
         r_def = max_power_defs[rate_key]
         return Rate(
-            value=int(r_def["value"]),
+            value=float(r_def["value"]),
             unit=str(r_def["unit"]),
             period=self._normalize_period(r_def["period"])
         )
@@ -43,7 +43,7 @@ class DatasheetEvaluatorService:
             raise KeyError(f"Quota definition '{quota_key}' not found in capacity definitions.")
         q_def = capacity_defs[quota_key]
         return Quota(
-            value=int(q_def["value"]),
+            value=float(q_def["value"]),
             unit=str(q_def["unit"]),
             period=self._normalize_period(q_def["period"])
         )
@@ -58,22 +58,22 @@ class DatasheetEvaluatorService:
         keys = quota_def if isinstance(quota_def, list) else [quota_def]
         return [self._parse_quota(k, capacity_defs) for k in keys]
 
-    def _parse_workload(self, workload_def: Optional[dict]) -> Optional[dict]:
-        """Returns {'unit': str, 'min': int, 'max': int} or None."""
+    def _parse_workload(self, workload_def) -> Optional[List[dict]]:
+        """Returns list of {'unit': str, 'min': float, 'max': float} or None."""
         if not workload_def:
             return None
-        return {
-            'unit': str(workload_def['unit']),
-            'min': int(workload_def['min']),
-            'max': int(workload_def['max']),
-        }
+        items = workload_def if isinstance(workload_def, list) else [workload_def]
+        return [
+            {'unit': str(w['unit']), 'min': float(w['min']), 'max': float(w['max'])}
+            for w in items
+        ]
 
     def _build_scenarios(
         self,
         rates: List[Rate],
         quotas: List[Quota],
         workload: dict,
-        capacity_request_factor: Optional[Dict[str, int]],
+        capacity_request_factor: Optional[Dict[str, float]],
     ) -> List[tuple]:
         """
         Returns list of (scenario_name, dimension, rates, quotas).
@@ -104,33 +104,32 @@ class DatasheetEvaluatorService:
         elif wl_min == wl_max_eff:
             wl_values = [("fixed", wl_min)]
         else:
-            wl_avg = round((wl_min + wl_max_eff) / 2)
-            wl_values = [("worst", wl_min), ("avg", wl_avg), ("best", wl_max_eff)]
+            wl_avg = (wl_min + wl_max_eff) / 2
+            if wl_min == int(wl_min) and wl_max_eff == int(wl_max_eff):
+                wl_avg = round(wl_avg)
+            # exclude zero-workload values to avoid division by zero
+            candidates = [("worst", wl_min), ("avg", wl_avg), ("best", wl_max_eff)]
+            wl_values = [(name, w) for name, w in candidates if w > 0]
 
-        # Classify limits by unit
-        rates_req    = [r for r in rates  if r.unit == "requests"]
-        rates_wl     = [r for r in rates  if r.unit == wl_unit]
-        quotas_req   = [q for q in quotas if q.unit == "requests"]
-        quotas_other = [q for q in quotas if q.unit not in ("requests", wl_unit)]
-
-        for q in quotas_other:
-            print(f"[WARNING] Quota omitted (no workload for unit '{q.unit}'): {q}")
+        # Classify limits by unit — quotas/rates of OTHER workload units are silently
+        # ignored here; they are processed by their own _build_scenarios call.
+        rates_req  = [r for r in rates  if r.unit == "requests"]
+        rates_wl   = [r for r in rates  if r.unit == wl_unit]
+        quotas_req = [q for q in quotas if q.unit == "requests"]
 
         print(f"[DIM] wl_unit={wl_unit} wl_min={wl_min} wl_max={wl_max} wl_max_eff={wl_max_eff} scenarios={[v for _, v in wl_values]}")
 
         scenarios = []
         for sc_name, w in wl_values:
             # ── requests dimension ────────────────────────────────────────────
-            # rates already in req stay; wl-unit rates are divided by w
             sc_rates_req = list(rates_req)
             for r in rates_wl:
                 sc_rates_req.append(Rate(value=max(1, round(r.value / w)), unit="requests", period=r.period))
 
-            # quotas already in req stay; wl-unit quotas are floor-divided by w
             sc_quotas_req = list(quotas_req)
             skip_req = False
             for q in quotas_wl:
-                cv = q.value // w
+                cv = int(q.value // w)
                 if cv < 1:
                     skip_req = True
                     break
@@ -138,12 +137,11 @@ class DatasheetEvaluatorService:
 
             if not skip_req and (sc_rates_req or sc_quotas_req):
                 print(f"[DIM]   w={w} → requests: rates={[(r.value, r.unit, r.period) for r in sc_rates_req]} quotas={[(q.value, q.unit, q.period) for q in sc_quotas_req]}")
-                scenarios.append((sc_name, "requests", sc_rates_req, sc_quotas_req, w))
+                scenarios.append((sc_name, "requests", sc_rates_req, sc_quotas_req, w, wl_unit))
             else:
                 print(f"[DIM]   w={w} → requests: SKIPPED (quota converts to <1 req)")
 
             # ── workload-unit dimension ───────────────────────────────────────
-            # wl-unit rates stay; req rates are multiplied by w
             sc_rates_wl = list(rates_wl)
             for r in rates_req:
                 sc_rates_wl.append(Rate(value=r.value * w, unit=wl_unit, period=r.period))
@@ -152,7 +150,7 @@ class DatasheetEvaluatorService:
 
             if sc_rates_wl or sc_quotas_wl:
                 print(f"[DIM]   w={w} → {wl_unit}: rates={[(r.value, r.unit, r.period) for r in sc_rates_wl]} quotas={[(q.value, q.unit, q.period) for q in sc_quotas_wl]}")
-                scenarios.append((sc_name, wl_unit, sc_rates_wl, sc_quotas_wl, w))
+                scenarios.append((sc_name, wl_unit, sc_rates_wl, sc_quotas_wl, w, wl_unit))
 
         return scenarios
 
@@ -164,7 +162,7 @@ class DatasheetEvaluatorService:
         inherited_rates: List[Rate],
         inherited_quotas: List[Quota],
         capacity_unit: Optional[str] = None,
-        capacity_request_factor: Optional[Dict[str, int]] = None,
+        capacity_request_factor: Optional[Dict[str, float]] = None,
     ) -> List[tuple]:
         """
         Returns List of (sc_name, dimension, rates, quotas, wf) for a leaf node.
@@ -177,13 +175,15 @@ class DatasheetEvaluatorService:
         if quota_def := node_config.get("quota"):
             quotas.extend(self._parse_quotas(quota_def, capacity_defs))
 
-        workload = self._parse_workload(node_config.get("workload"))
+        workloads = self._parse_workload(node_config.get("workload"))
 
-        if not workload:
+        if not workloads:
             unit = rates[0].unit if rates else quotas[0].unit
-            return [("fixed", unit, rates, quotas, None)]
+            return [("fixed", unit, rates, quotas, None, None)]
 
-        scenarios = self._build_scenarios(rates, quotas, workload, capacity_request_factor)
+        scenarios = []
+        for wl in workloads:
+            scenarios.extend(self._build_scenarios(rates, quotas, wl, capacity_request_factor))
 
         if capacity_unit:
             available = list({sc[1] for sc in scenarios})
@@ -198,7 +198,7 @@ class DatasheetEvaluatorService:
         yaml_data: dict,
         request: EvaluateDatasheetRequest,
         capacity_unit: Optional[str] = None,
-        capacity_request_factor: Optional[Dict[str, int]] = None,
+        capacity_request_factor: Optional[Dict[str, float]] = None,
     ) -> List[dict]:
         """
         Returns a flat list of scenario dicts, each with:
@@ -251,15 +251,17 @@ class DatasheetEvaluatorService:
                     if request.alias:
                         alias_entries = {request.alias: alias_entries[request.alias]}
 
+                    ep_workload = ep_config.get("workload")
                     for alias_name, alias_config in alias_entries.items():
-                        for sc in self._get_node_scenarios(alias_config, capacity_defs, max_power_defs, ep_rates, ep_quotas, capacity_unit, capacity_request_factor):
+                        effective = {**alias_config, "workload": ep_workload} if ep_workload and "workload" not in alias_config else alias_config
+                        for sc in self._get_node_scenarios(effective, capacity_defs, max_power_defs, ep_rates, ep_quotas, capacity_unit, capacity_request_factor):
                             result.append({"plan": plan_name, "endpoint": ep_path, "alias": alias_name,
-                                           "dimension": sc[1], "crf": sc[4], "rates": sc[2], "quotas": sc[3]})
+                                           "dimension": sc[1], "crf": sc[4], "rates": sc[2], "quotas": sc[3], "workload_unit": sc[5]})
                 else:
                     alias_name = "default"
                     for sc in self._get_node_scenarios(ep_config, capacity_defs, max_power_defs, plan_rates, plan_quotas, capacity_unit, capacity_request_factor):
                         result.append({"plan": plan_name, "endpoint": ep_path, "alias": alias_name,
-                                       "dimension": sc[1], "crf": sc[4], "rates": sc[2], "quotas": sc[3]})
+                                       "dimension": sc[1], "crf": sc[4], "rates": sc[2], "quotas": sc[3], "workload_unit": sc[5]})
 
         return result
 
@@ -274,7 +276,7 @@ class DatasheetEvaluatorService:
 
     def evaluate(self, yaml_data: dict, request: EvaluateDatasheetRequest,
                  capacity_unit: Optional[str] = None,
-                 capacity_request_factor: Optional[Dict[str, int]] = None) -> Dict[str, List[EvaluateDatasheetResultItem]]:
+                 capacity_request_factor: Optional[Dict[str, float]] = None) -> Dict[str, List[EvaluateDatasheetResultItem]]:
         capacity_defs  = yaml_data.get("capacity", {}) or {}
         max_power_defs = yaml_data.get("max_power", {}) or {}
         plans = yaml_data.get("plans", {})
@@ -304,7 +306,7 @@ class DatasheetEvaluatorService:
     def _evaluate_plan(self, plan_name: str, plan_data: dict, capacity_defs: dict,
                        max_power_defs: dict, request: EvaluateDatasheetRequest,
                        capacity_unit: Optional[str] = None,
-                       capacity_request_factor: Optional[Dict[str, int]] = None) -> List[EvaluateDatasheetResultItem]:
+                       capacity_request_factor: Optional[Dict[str, float]] = None) -> List[EvaluateDatasheetResultItem]:
         endpoints_data = plan_data.get("endpoints", {}) or {}
 
         plan_rates: List[Rate] = []
@@ -345,9 +347,11 @@ class DatasheetEvaluatorService:
                         raise KeyError(f"Alias '{request.alias}' not found in endpoint '{ep_path}'. Valid aliases are: {list(alias_entries.keys())}")
                     alias_entries = {request.alias: alias_entries[request.alias]}
 
+                ep_workload = ep_config.get("workload")
                 for alias_name, alias_config in alias_entries.items():
+                    effective = {**alias_config, "workload": ep_workload} if ep_workload and "workload" not in alias_config else alias_config
                     res = self._process_node(
-                        node_config=alias_config,
+                        node_config=effective,
                         capacity_defs=capacity_defs,
                         max_power_defs=max_power_defs,
                         inherited_rates=ep_rates,
@@ -385,7 +389,7 @@ class DatasheetEvaluatorService:
                       inherited_rates: List[Rate], inherited_quotas: List[Quota],
                       operation: str, operation_params: dict,
                       capacity_unit: Optional[str] = None,
-                      capacity_request_factor: Optional[Dict[str, int]] = None) -> Any:
+                      capacity_request_factor: Optional[Dict[str, float]] = None) -> Any:
 
         rates: List[Rate] = list(inherited_rates)
         if rate_def := node_config.get("rate"):
@@ -431,7 +435,9 @@ class DatasheetEvaluatorService:
             unit = rates[0].unit if rates else quotas[0].unit
             return [DimensionResult(dimension=unit, workload_factor=None, value=result)]
 
-        scenarios = self._build_scenarios(rates, quotas, workload, capacity_request_factor)
+        scenarios = []
+        for wl in workload:
+            scenarios.extend(self._build_scenarios(rates, quotas, wl, capacity_request_factor))
 
         if capacity_unit:
             available = list({sc[1] for sc in scenarios})
@@ -439,7 +445,7 @@ class DatasheetEvaluatorService:
                 raise ValueError(f"capacity_unit '{capacity_unit}' is not available. Available dimensions: {available}")
 
         dimension_results = []
-        for sc_name, dimension, sc_rates, sc_quotas, wf in scenarios:
+        for sc_name, dimension, sc_rates, sc_quotas, wf, *_ in scenarios:
             if capacity_unit and dimension != capacity_unit:
                 continue
             kwargs = dict(operation_params)

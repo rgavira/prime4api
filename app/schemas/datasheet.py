@@ -9,11 +9,11 @@ from app.models import Rate, Quota
 
 class DimensionResult(BaseModel):
     dimension: str
-    workload_factor: Optional[int] = None  # actual emails/req used; None when no workload
+    workload_factor: Optional[float] = None  # actual emails/req used; None when no workload
     value: Any
 
 class CaseResult(BaseModel):
-    capacity_request_factor: Optional[int] = None
+    capacity_request_factor: Optional[float] = None
     value: Any
 
 
@@ -141,7 +141,8 @@ class DatasheetCurveSeries(BaseModel):
     endpoint: str
     alias: str
     dimension: str
-    capacity_request_factor: Optional[int] = None
+    workload_unit: Optional[str] = None
+    capacity_request_factor: Optional[float] = None
     rates: List[Rate] = Field(default_factory=list)
     quotas: List[Quota] = Field(default_factory=list)
     t_ms: List[float]
