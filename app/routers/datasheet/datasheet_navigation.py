@@ -1,9 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from app.schemas.datasheet import (
-    NavSourceRequest,
-    NavPlanRequest,
-    NavEndpointRequest,
-    NavEndpointRequiredRequest,
+    NavRequest,
     NavPlansResponse,
     NavEndpointsResponse,
     NavCapacityUnitsResponse,
@@ -17,10 +14,12 @@ from app.utils.yaml_utils import load_yaml_source
 router = APIRouter()
 evaluator_service = DatasheetEvaluatorService()
 
+_EX = {"response_model_exclude_none": True}
+
 
 @router.post("/plans", response_model=NavPlansResponse,
-             summary="List available billing plans in the datasheet")
-def get_plans(request: NavSourceRequest):
+             summary="List all billing plans in the datasheet")
+def get_plans(request: NavRequest):
     yaml_data = load_yaml_source(request.datasheet_source)
     try:
         return NavPlansResponse(plans=evaluator_service.get_plans(yaml_data))
@@ -28,9 +27,9 @@ def get_plans(request: NavSourceRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/endpoints", response_model=NavEndpointsResponse,
-             summary="List endpoints available in a given plan")
-def get_endpoints(request: NavPlanRequest):
+@router.post("/endpoints", response_model=NavEndpointsResponse, **_EX,
+             summary="List endpoints. Optionally filter by plan_name; omit for union across all plans.")
+def get_endpoints(request: NavRequest):
     yaml_data = load_yaml_source(request.datasheet_source)
     try:
         return NavEndpointsResponse(
@@ -41,10 +40,9 @@ def get_endpoints(request: NavPlanRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/capacity-units", response_model=NavCapacityUnitsResponse,
-             response_model_exclude_none=True,
-             summary="List workload-based capacity units. plan_name and endpoint_path are optional filters; omit both to get the union across the entire datasheet.")
-def get_capacity_units(request: NavEndpointRequest):
+@router.post("/capacity-units", response_model=NavCapacityUnitsResponse, **_EX,
+             summary="List workload-based capacity units. All filters optional; omit for union across entire datasheet.")
+def get_capacity_units(request: NavRequest):
     yaml_data = load_yaml_source(request.datasheet_source)
     try:
         units = evaluator_service.get_capacity_units(
@@ -59,10 +57,9 @@ def get_capacity_units(request: NavEndpointRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/aliases", response_model=NavAliasesResponse,
-             response_model_exclude_none=True,
-             summary="List aliases for a specific endpoint (null if none)")
-def get_aliases(request: NavEndpointRequiredRequest):
+@router.post("/aliases", response_model=NavAliasesResponse, **_EX,
+             summary="List aliases. All filters optional; omit for union across all plans/endpoints. Field absent if no aliases exist.")
+def get_aliases(request: NavRequest):
     yaml_data = load_yaml_source(request.datasheet_source)
     try:
         aliases = evaluator_service.get_aliases(
@@ -77,10 +74,9 @@ def get_aliases(request: NavEndpointRequiredRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/crf-ranges", response_model=NavCRFRangesResponse,
-             response_model_exclude_none=True,
-             summary="Return the min/max CRF range per workload unit for an endpoint")
-def get_crf_ranges(request: NavEndpointRequiredRequest):
+@router.post("/crf-ranges", response_model=NavCRFRangesResponse, **_EX,
+             summary="Return CRF min/max per workload unit. All filters optional; omit for broadest ranges across all plans/endpoints.")
+def get_crf_ranges(request: NavRequest):
     yaml_data = load_yaml_source(request.datasheet_source)
     try:
         raw = evaluator_service.get_crf_ranges(

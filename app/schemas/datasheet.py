@@ -158,22 +158,10 @@ class DatasheetCurveDataResponse(BaseModel):
 # Navigation — requests
 # ──────────────────────────────────────────────────────────────────────────────
 
-class NavSourceRequest(BaseModel):
+class NavRequest(BaseModel):
     datasheet_source: str = Field(..., description="Raw YAML text OR URI to the datasheet.")
-
-class NavPlanRequest(BaseModel):
-    datasheet_source: str = Field(..., description="Raw YAML text OR URI to the datasheet.")
-    plan_name: str = Field(..., description="Target billing plan (e.g. 'free', 'pro').")
-
-class NavEndpointRequest(BaseModel):
-    datasheet_source: str = Field(..., description="Raw YAML text OR URI to the datasheet.")
-    plan_name: Optional[str] = Field(None, description="Target billing plan. If omitted, capacity units from all plans are returned (union).")
-    endpoint_path: Optional[str] = Field(None, description="Filter to a specific endpoint. If omitted, all endpoints in the plan are considered.")
-
-class NavEndpointRequiredRequest(BaseModel):
-    datasheet_source: str = Field(..., description="Raw YAML text OR URI to the datasheet.")
-    plan_name: str = Field(..., description="Target billing plan.")
-    endpoint_path: str = Field(..., description="Specific endpoint path (e.g. '/mail/send').")
+    plan_name: Optional[str] = Field(None, description="Filter by billing plan (e.g. 'free', 'pro'). If omitted, all plans are considered.")
+    endpoint_path: Optional[str] = Field(None, description="Filter by endpoint path (e.g. '/mail/send'). If omitted, all endpoints are considered.")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -184,7 +172,7 @@ class NavPlansResponse(BaseModel):
     plans: List[str]
 
 class NavEndpointsResponse(BaseModel):
-    plan: str
+    plan: Optional[str] = None
     endpoints: List[str]
 
 class NavCapacityUnitsResponse(BaseModel):
@@ -193,8 +181,8 @@ class NavCapacityUnitsResponse(BaseModel):
     units: List[str]
 
 class NavAliasesResponse(BaseModel):
-    plan: str
-    endpoint: str
+    plan: Optional[str] = None
+    endpoint: Optional[str] = None
     aliases: Optional[List[str]] = None
 
 class CRFRange(BaseModel):
@@ -204,6 +192,6 @@ class CRFRange(BaseModel):
     description: Optional[str] = None
 
 class NavCRFRangesResponse(BaseModel):
-    plan: str
-    endpoint: str
+    plan: Optional[str] = None
+    endpoint: Optional[str] = None
     crf_ranges: List[CRFRange]

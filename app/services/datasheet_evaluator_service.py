@@ -198,11 +198,20 @@ class DatasheetEvaluatorService:
     def get_plans(self, yaml_data: dict) -> List[str]:
         return list(yaml_data.get("plans", {}).keys())
 
-    def get_endpoints(self, yaml_data: dict, plan_name: str) -> List[str]:
+    def get_endpoints(self, yaml_data: dict, plan_name: Optional[str] = None) -> List[str]:
         plans = yaml_data.get("plans", {})
-        if plan_name not in plans:
-            raise KeyError(f"Plan '{plan_name}' not found. Available: {list(plans.keys())}")
-        return list((plans[plan_name].get("endpoints") or {}).keys())
+        if plan_name:
+            if plan_name not in plans:
+                raise KeyError(f"Plan '{plan_name}' not found. Available: {list(plans.keys())}")
+            plans_to_scan = {plan_name: plans[plan_name]}
+        else:
+            plans_to_scan = plans
+        seen: list = []
+        for plan_data in plans_to_scan.values():
+            for ep in (plan_data.get("endpoints") or {}).keys():
+                if ep not in seen:
+                    seen.append(ep)
+        return seen
 
     def get_capacity_units(self, yaml_data: dict, plan_name: Optional[str] = None, endpoint_path: Optional[str] = None) -> List[str]:
         plans = yaml_data.get("plans", {})
@@ -239,42 +248,64 @@ class DatasheetEvaluatorService:
                         seen.append(u)
         return seen
 
-    def get_aliases(self, yaml_data: dict, plan_name: str, endpoint_path: str) -> Optional[List[str]]:
+    def get_aliases(self, yaml_data: dict, plan_name: Optional[str] = None, endpoint_path: Optional[str] = None) -> Optional[List[str]]:
         plans = yaml_data.get("plans", {})
-        if plan_name not in plans:
-            raise KeyError(f"Plan '{plan_name}' not found. Available: {list(plans.keys())}")
-        endpoints_data = plans[plan_name].get("endpoints") or {}
-        if endpoint_path not in endpoints_data:
-            raise KeyError(f"Endpoint '{endpoint_path}' not found in plan '{plan_name}'.")
-        ep_config = endpoints_data[endpoint_path] or {}
-        if not self._has_aliases(ep_config):
-            return None
-        return [k for k, v in ep_config.items() if k not in _KNOWN_ENDPOINT_KEYS and isinstance(v, dict)]
+        if plan_name:
+            if plan_name not in plans:
+                raise KeyError(f"Plan '{plan_name}' not found. Available: {list(plans.keys())}")
+            plans_to_scan = {plan_name: plans[plan_name]}
+        else:
+            plans_to_scan = plans
+        seen: list = []
+        for plan_data in plans_to_scan.values():
+            endpoints_data = plan_data.get("endpoints") or {}
+            eps = {endpoint_path: endpoints_data[endpoint_path]} if endpoint_path and endpoint_path in endpoints_data else endpoints_data
+            for ep_config in eps.values():
+                ep_config = ep_config or {}
+                if self._has_aliases(ep_config):
+                    for k, v in ep_config.items():
+                        if k not in _KNOWN_ENDPOINT_KEYS and isinstance(v, dict) and k not in seen:
+                            seen.append(k)
+        return seen if seen else None
 
-    def get_crf_ranges(self, yaml_data: dict, plan_name: str, endpoint_path: str) -> List[Dict[str, Any]]:
-        plans = yaml_data.get("plans", {})
-        if plan_name not in plans:
-            raise KeyError(f"Plan '{plan_name}' not found. Available: {list(plans.keys())}")
-        endpoints_data = plans[plan_name].get("endpoints") or {}
-        if endpoint_path not in endpoints_data:
-            raise KeyError(f"Endpoint '{endpoint_path}' not found in plan '{plan_name}'.")
-        ep_config = endpoints_data[endpoint_path] or {}
+    def _collect_workloads_from_ep(self, ep_config: dict) -> list:
+        """Extracts raw workload dicts from an endpoint config, handling aliases."""
         if self._has_aliases(ep_config):
-            raw: list = list(ep_config.get("workload") or [])
-            alias_entries = {k: v for k, v in ep_config.items() if k not in _KNOWN_ENDPOINT_KEYS and isinstance(v, dict)}
-            for alias_config in alias_entries.values():
-                for w in (alias_config.get("workload") or []):
-                    if not any(x["unit"] == w["unit"] for x in raw):
-                        raw.append(w)
+            raw = list(ep_config.get("workload") or [])
+            for k, v in ep_config.items():
+                if k not in _KNOWN_ENDPOINT_KEYS and isinstance(v, dict):
+                    for w in (v.get("workload") or []):
+                        if not any(x["unit"] == w["unit"] for x in raw):
+                            raw.append(w)
         else:
             raw = list(ep_config.get("workload") or [])
-        result = []
-        for w in raw:
-            entry: Dict[str, Any] = {"unit": str(w["unit"]), "min": float(w["min"]), "max": float(w["max"])}
-            if w.get("description"):
-                entry["description"] = str(w["description"])
-            result.append(entry)
-        return result
+        return raw
+
+    def get_crf_ranges(self, yaml_data: dict, plan_name: Optional[str] = None, endpoint_path: Optional[str] = None) -> List[Dict[str, Any]]:
+        plans = yaml_data.get("plans", {})
+        if plan_name:
+            if plan_name not in plans:
+                raise KeyError(f"Plan '{plan_name}' not found. Available: {list(plans.keys())}")
+            plans_to_scan = {plan_name: plans[plan_name]}
+        else:
+            plans_to_scan = plans
+        # Collect broadest range per unit across all matching plans/endpoints
+        ranges: Dict[str, Dict[str, Any]] = {}
+        for plan_data in plans_to_scan.values():
+            endpoints_data = plan_data.get("endpoints") or {}
+            eps = {endpoint_path: endpoints_data[endpoint_path]} if endpoint_path and endpoint_path in endpoints_data else endpoints_data
+            for ep_config in eps.values():
+                for w in self._collect_workloads_from_ep(ep_config or {}):
+                    unit = str(w["unit"])
+                    wmin, wmax = float(w["min"]), float(w["max"])
+                    if unit not in ranges:
+                        ranges[unit] = {"unit": unit, "min": wmin, "max": wmax}
+                        if w.get("description"):
+                            ranges[unit]["description"] = str(w["description"])
+                    else:
+                        ranges[unit]["min"] = min(ranges[unit]["min"], wmin)
+                        ranges[unit]["max"] = max(ranges[unit]["max"], wmax)
+        return list(ranges.values())
 
     def get_curve_scenarios(
         self,
