@@ -193,6 +193,89 @@ class DatasheetEvaluatorService:
 
         return scenarios
 
+    # ── Navigation helpers ────────────────────────────────────────────────────
+
+    def get_plans(self, yaml_data: dict) -> List[str]:
+        return list(yaml_data.get("plans", {}).keys())
+
+    def get_endpoints(self, yaml_data: dict, plan_name: str) -> List[str]:
+        plans = yaml_data.get("plans", {})
+        if plan_name not in plans:
+            raise KeyError(f"Plan '{plan_name}' not found. Available: {list(plans.keys())}")
+        return list((plans[plan_name].get("endpoints") or {}).keys())
+
+    def get_capacity_units(self, yaml_data: dict, plan_name: Optional[str] = None, endpoint_path: Optional[str] = None) -> List[str]:
+        plans = yaml_data.get("plans", {})
+        if plan_name:
+            if plan_name not in plans:
+                raise KeyError(f"Plan '{plan_name}' not found. Available: {list(plans.keys())}")
+            plans_to_scan = {plan_name: plans[plan_name]}
+        else:
+            plans_to_scan = plans
+        seen: list = []
+        for plan_data in plans_to_scan.values():
+            endpoints_data = plan_data.get("endpoints") or {}
+            if endpoint_path:
+                if endpoint_path not in endpoints_data:
+                    continue
+                endpoints_to_scan = {endpoint_path: endpoints_data[endpoint_path]}
+            else:
+                endpoints_to_scan = endpoints_data
+            for ep_config in endpoints_to_scan.values():
+                ep_config = ep_config or {}
+                if self._has_aliases(ep_config):
+                    ep_workload = ep_config.get("workload") or []
+                    alias_entries = {k: v for k, v in ep_config.items() if k not in _KNOWN_ENDPOINT_KEYS and isinstance(v, dict)}
+                    workloads = list(ep_workload)
+                    for alias_config in alias_entries.values():
+                        for w in (alias_config.get("workload") or []):
+                            if not any(x["unit"] == w["unit"] for x in workloads):
+                                workloads.append(w)
+                else:
+                    workloads = ep_config.get("workload") or []
+                for w in workloads:
+                    u = str(w["unit"])
+                    if u not in seen:
+                        seen.append(u)
+        return seen
+
+    def get_aliases(self, yaml_data: dict, plan_name: str, endpoint_path: str) -> Optional[List[str]]:
+        plans = yaml_data.get("plans", {})
+        if plan_name not in plans:
+            raise KeyError(f"Plan '{plan_name}' not found. Available: {list(plans.keys())}")
+        endpoints_data = plans[plan_name].get("endpoints") or {}
+        if endpoint_path not in endpoints_data:
+            raise KeyError(f"Endpoint '{endpoint_path}' not found in plan '{plan_name}'.")
+        ep_config = endpoints_data[endpoint_path] or {}
+        if not self._has_aliases(ep_config):
+            return None
+        return [k for k, v in ep_config.items() if k not in _KNOWN_ENDPOINT_KEYS and isinstance(v, dict)]
+
+    def get_crf_ranges(self, yaml_data: dict, plan_name: str, endpoint_path: str) -> List[Dict[str, Any]]:
+        plans = yaml_data.get("plans", {})
+        if plan_name not in plans:
+            raise KeyError(f"Plan '{plan_name}' not found. Available: {list(plans.keys())}")
+        endpoints_data = plans[plan_name].get("endpoints") or {}
+        if endpoint_path not in endpoints_data:
+            raise KeyError(f"Endpoint '{endpoint_path}' not found in plan '{plan_name}'.")
+        ep_config = endpoints_data[endpoint_path] or {}
+        if self._has_aliases(ep_config):
+            raw: list = list(ep_config.get("workload") or [])
+            alias_entries = {k: v for k, v in ep_config.items() if k not in _KNOWN_ENDPOINT_KEYS and isinstance(v, dict)}
+            for alias_config in alias_entries.values():
+                for w in (alias_config.get("workload") or []):
+                    if not any(x["unit"] == w["unit"] for x in raw):
+                        raw.append(w)
+        else:
+            raw = list(ep_config.get("workload") or [])
+        result = []
+        for w in raw:
+            entry: Dict[str, Any] = {"unit": str(w["unit"]), "min": float(w["min"]), "max": float(w["max"])}
+            if w.get("description"):
+                entry["description"] = str(w["description"])
+            result.append(entry)
+        return result
+
     def get_curve_scenarios(
         self,
         yaml_data: dict,
@@ -258,9 +341,8 @@ class DatasheetEvaluatorService:
                             result.append({"plan": plan_name, "endpoint": ep_path, "alias": alias_name,
                                            "dimension": sc[1], "crf": sc[4], "rates": sc[2], "quotas": sc[3], "workload_unit": sc[5]})
                 else:
-                    alias_name = "default"
                     for sc in self._get_node_scenarios(ep_config, capacity_defs, max_power_defs, plan_rates, plan_quotas, capacity_unit, capacity_request_factor):
-                        result.append({"plan": plan_name, "endpoint": ep_path, "alias": alias_name,
+                        result.append({"plan": plan_name, "endpoint": ep_path, "alias": None,
                                        "dimension": sc[1], "crf": sc[4], "rates": sc[2], "quotas": sc[3], "workload_unit": sc[5]})
 
         return result
@@ -380,7 +462,7 @@ class DatasheetEvaluatorService:
                     capacity_request_factor=capacity_request_factor,
                 )
                 results.append(EvaluateDatasheetResultItem(
-                    endpoint=ep_path, alias="default", result=res
+                    endpoint=ep_path, alias=None, result=res
                 ))
 
         return results

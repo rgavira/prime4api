@@ -32,7 +32,7 @@ class EvaluateDatasheetRequest(BaseModel):
 
 class EvaluateDatasheetResultItem(BaseModel):
     endpoint: str
-    alias: str
+    alias: Optional[str] = None
     result: Any
 
 
@@ -59,42 +59,42 @@ class DatasheetBaseRequest(BaseModel):
 
 class DatasheetMinTimeResultItem(BaseModel):
     endpoint: str
-    alias: str
+    alias: Optional[str] = None
     dimensions: Dict[str, List[CaseResult]]
 
 class DatasheetCapacityAtResultItem(BaseModel):
     endpoint: str
-    alias: str
+    alias: Optional[str] = None
     dimensions: Dict[str, List[CaseResult]]
 
 class DatasheetCapacityDuringResultItem(BaseModel):
     endpoint: str
-    alias: str
+    alias: Optional[str] = None
     dimensions: Dict[str, List[CaseResult]]
 
 class DatasheetQuotaExhaustionResultItem(BaseModel):
     endpoint: str
-    alias: str
+    alias: Optional[str] = None
     dimensions: Dict[str, List[CaseResult]]
 
 class DatasheetIdleTimePeriodResultItem(BaseModel):
     endpoint: str
-    alias: str
+    alias: Optional[str] = None
     dimensions: Dict[str, List[CaseResult]]
 
 class DatasheetRatesResultItem(BaseModel):
     endpoint: str
-    alias: str
+    alias: Optional[str] = None
     rates: List[Rate]
 
 class DatasheetQuotasResultItem(BaseModel):
     endpoint: str
-    alias: str
+    alias: Optional[str] = None
     quotas: List[Quota]
 
 class DatasheetLimitsResultItem(BaseModel):
     endpoint: str
-    alias: str
+    alias: Optional[str] = None
     rates: List[Rate]
     quotas: List[Quota]
 
@@ -139,7 +139,7 @@ class DatasheetLimitsResponse(BaseModel):
 class DatasheetCurveSeries(BaseModel):
     plan: str
     endpoint: str
-    alias: str
+    alias: Optional[str] = None
     dimension: str
     workload_unit: Optional[str] = None
     capacity_request_factor: Optional[float] = None
@@ -152,3 +152,58 @@ class DatasheetCurveDataResponse(BaseModel):
     time_interval: str
     curve_type: str   # "accumulated" | "inflection"
     series: List[DatasheetCurveSeries]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Navigation — requests
+# ──────────────────────────────────────────────────────────────────────────────
+
+class NavSourceRequest(BaseModel):
+    datasheet_source: str = Field(..., description="Raw YAML text OR URI to the datasheet.")
+
+class NavPlanRequest(BaseModel):
+    datasheet_source: str = Field(..., description="Raw YAML text OR URI to the datasheet.")
+    plan_name: str = Field(..., description="Target billing plan (e.g. 'free', 'pro').")
+
+class NavEndpointRequest(BaseModel):
+    datasheet_source: str = Field(..., description="Raw YAML text OR URI to the datasheet.")
+    plan_name: Optional[str] = Field(None, description="Target billing plan. If omitted, capacity units from all plans are returned (union).")
+    endpoint_path: Optional[str] = Field(None, description="Filter to a specific endpoint. If omitted, all endpoints in the plan are considered.")
+
+class NavEndpointRequiredRequest(BaseModel):
+    datasheet_source: str = Field(..., description="Raw YAML text OR URI to the datasheet.")
+    plan_name: str = Field(..., description="Target billing plan.")
+    endpoint_path: str = Field(..., description="Specific endpoint path (e.g. '/mail/send').")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Navigation — responses
+# ──────────────────────────────────────────────────────────────────────────────
+
+class NavPlansResponse(BaseModel):
+    plans: List[str]
+
+class NavEndpointsResponse(BaseModel):
+    plan: str
+    endpoints: List[str]
+
+class NavCapacityUnitsResponse(BaseModel):
+    plan: Optional[str] = None
+    endpoint: Optional[str] = None
+    units: List[str]
+
+class NavAliasesResponse(BaseModel):
+    plan: str
+    endpoint: str
+    aliases: Optional[List[str]] = None
+
+class CRFRange(BaseModel):
+    unit: str
+    min: float
+    max: float
+    description: Optional[str] = None
+
+class NavCRFRangesResponse(BaseModel):
+    plan: str
+    endpoint: str
+    crf_ranges: List[CRFRange]

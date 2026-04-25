@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional
+import json
 
 from app.models import Rate, Quota
 from app.schemas.datasheet import (
@@ -45,19 +46,43 @@ def _group_dimensions(result) -> dict:
     return grouped
 
 
-def _crf_dict(capacity_unit: Optional[str], capacity_request_factor: Optional[int]) -> Optional[dict]:
-    """Converts query params into the dict the service expects."""
-    if capacity_unit and capacity_request_factor is not None:
-        return {capacity_unit: capacity_request_factor}
+def _parse_crf(capacity_unit: Optional[str], capacity_request_factor: Optional[str]) -> Optional[dict]:
+    """
+    Parses capacity_request_factor into Dict[str, float] for the service.
+
+    Accepts:
+      - JSON dict string: '{"emails": 500, "MBs": 0.256}'  → multi-unit CRF
+      - Plain number string: "500" (requires capacity_unit)  → single-unit CRF
+    Endpoints whose workload does not include a given unit simply ignore that CRF key.
+    """
+    if not capacity_request_factor:
+        return None
+    try:
+        parsed = json.loads(capacity_request_factor)
+        if isinstance(parsed, dict):
+            return {k: float(v) for k, v in parsed.items()}
+        if isinstance(parsed, (int, float)) and capacity_unit:
+            return {capacity_unit: float(parsed)}
+        return None
+    except (json.JSONDecodeError, ValueError):
+        pass
+    try:
+        val = float(capacity_request_factor)
+        if capacity_unit:
+            return {capacity_unit: val}
+    except ValueError:
+        raise ValueError(
+            f"capacity_request_factor must be a number or a JSON dict, got: {capacity_request_factor!r}"
+        )
     return None
 
 
-@router.post("/min-time", response_model=DatasheetMinTimeResponse)
+@router.post("/min-time", response_model=DatasheetMinTimeResponse, response_model_exclude_none=True)
 def get_min_time(
     request: DatasheetBaseRequest,
     capacity_goal: int = Query(..., description="Number of units to reach"),
-    capacity_unit: Optional[str] = Query(None, description="Unit dimension to filter (e.g. 'emails', 'requests'). Returns all if omitted."),
-    capacity_request_factor: Optional[int] = Query(None, description="Fixed workload value for capacity_unit (e.g. 500). Returns worst/avg/best range if omitted."),
+    capacity_unit: Optional[str] = Query(None, description="Unit dimension to filter results (e.g. 'emails', 'requests'). Returns all if omitted."),
+    capacity_request_factor: Optional[str] = Query(None, description="Fixed workload per unit. Plain number (e.g. '500') requires capacity_unit. JSON dict (e.g. '{\"emails\":500,\"MBs\":0.256}') sets multiple units at once."),
 ):
     yaml_data = load_yaml_source(request.datasheet_source)
     try:
@@ -65,7 +90,7 @@ def get_min_time(
             yaml_data,
             _build_request(request, "min_time", {"capacity_goal": capacity_goal}),
             capacity_unit=capacity_unit,
-            capacity_request_factor=_crf_dict(capacity_unit, capacity_request_factor),
+            capacity_request_factor=_parse_crf(capacity_unit, capacity_request_factor),
         )
         return DatasheetMinTimeResponse(
             capacity_goal=capacity_goal,
@@ -80,12 +105,12 @@ def get_min_time(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/capacity-at", response_model=DatasheetCapacityAtResponse)
+@router.post("/capacity-at", response_model=DatasheetCapacityAtResponse, response_model_exclude_none=True)
 def get_capacity_at(
     request: DatasheetBaseRequest,
     time: str = Query(..., description="Time instant (e.g. '1h', '1day')"),
-    capacity_unit: Optional[str] = Query(None, description="Unit dimension to filter (e.g. 'emails', 'requests'). Returns all if omitted."),
-    capacity_request_factor: Optional[int] = Query(None, description="Fixed workload value for capacity_unit. Returns worst/avg/best range if omitted."),
+    capacity_unit: Optional[str] = Query(None, description="Unit dimension to filter results (e.g. 'emails', 'requests'). Returns all if omitted."),
+    capacity_request_factor: Optional[str] = Query(None, description="Fixed workload per unit. Plain number (e.g. '500') requires capacity_unit. JSON dict (e.g. '{\"emails\":500,\"MBs\":0.256}') sets multiple units at once."),
 ):
     yaml_data = load_yaml_source(request.datasheet_source)
     try:
@@ -93,7 +118,7 @@ def get_capacity_at(
             yaml_data,
             _build_request(request, "capacity_at", {"time": time}),
             capacity_unit=capacity_unit,
-            capacity_request_factor=_crf_dict(capacity_unit, capacity_request_factor),
+            capacity_request_factor=_parse_crf(capacity_unit, capacity_request_factor),
         )
         return DatasheetCapacityAtResponse(
             time=time,
@@ -108,13 +133,13 @@ def get_capacity_at(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/capacity-during", response_model=DatasheetCapacityDuringResponse)
+@router.post("/capacity-during", response_model=DatasheetCapacityDuringResponse, response_model_exclude_none=True)
 def get_capacity_during(
     request: DatasheetBaseRequest,
     end_instant: str = Query(..., description="End time instant (e.g. '1day')"),
     start_instant: Optional[str] = Query("0ms", description="Start time instant (e.g. '0ms')"),
-    capacity_unit: Optional[str] = Query(None, description="Unit dimension to filter (e.g. 'emails', 'requests'). Returns all if omitted."),
-    capacity_request_factor: Optional[int] = Query(None, description="Fixed workload value for capacity_unit. Returns worst/avg/best range if omitted."),
+    capacity_unit: Optional[str] = Query(None, description="Unit dimension to filter results (e.g. 'emails', 'requests'). Returns all if omitted."),
+    capacity_request_factor: Optional[str] = Query(None, description="Fixed workload per unit. Plain number (e.g. '500') requires capacity_unit. JSON dict (e.g. '{\"emails\":500,\"MBs\":0.256}') sets multiple units at once."),
 ):
     yaml_data = load_yaml_source(request.datasheet_source)
     try:
@@ -122,7 +147,7 @@ def get_capacity_during(
             yaml_data,
             _build_request(request, "capacity_during", {"end_instant": end_instant, "start_instant": start_instant}),
             capacity_unit=capacity_unit,
-            capacity_request_factor=_crf_dict(capacity_unit, capacity_request_factor),
+            capacity_request_factor=_parse_crf(capacity_unit, capacity_request_factor),
         )
         return DatasheetCapacityDuringResponse(
             start_instant=start_instant,
@@ -138,11 +163,11 @@ def get_capacity_during(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/quota-exhaustion-threshold", response_model=DatasheetQuotaExhaustionResponse)
+@router.post("/quota-exhaustion-threshold", response_model=DatasheetQuotaExhaustionResponse, response_model_exclude_none=True)
 def get_quota_exhaustion_threshold(
     request: DatasheetBaseRequest,
-    capacity_unit: Optional[str] = Query(None, description="Unit dimension to filter (e.g. 'emails', 'requests'). Returns all if omitted."),
-    capacity_request_factor: Optional[int] = Query(None, description="Fixed workload value for capacity_unit. Returns worst/avg/best range if omitted."),
+    capacity_unit: Optional[str] = Query(None, description="Unit dimension to filter results (e.g. 'emails', 'requests'). Returns all if omitted."),
+    capacity_request_factor: Optional[str] = Query(None, description="Fixed workload per unit. Plain number (e.g. '500') requires capacity_unit. JSON dict (e.g. '{\"emails\":500,\"MBs\":0.256}') sets multiple units at once."),
 ):
     yaml_data = load_yaml_source(request.datasheet_source)
     try:
@@ -150,7 +175,7 @@ def get_quota_exhaustion_threshold(
             yaml_data,
             _build_request(request, "quota_exhaustion_threshold", {}),
             capacity_unit=capacity_unit,
-            capacity_request_factor=_crf_dict(capacity_unit, capacity_request_factor),
+            capacity_request_factor=_parse_crf(capacity_unit, capacity_request_factor),
         )
         return DatasheetQuotaExhaustionResponse(
             results={
@@ -164,11 +189,11 @@ def get_quota_exhaustion_threshold(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/idle-time-period", response_model=DatasheetIdleTimePeriodResponse)
+@router.post("/idle-time-period", response_model=DatasheetIdleTimePeriodResponse, response_model_exclude_none=True)
 def get_idle_time_period(
     request: DatasheetBaseRequest,
-    capacity_unit: Optional[str] = Query(None, description="Unit dimension to filter (e.g. 'emails', 'requests'). Returns all if omitted."),
-    capacity_request_factor: Optional[int] = Query(None, description="Fixed workload value for capacity_unit. Returns worst/avg/best range if omitted."),
+    capacity_unit: Optional[str] = Query(None, description="Unit dimension to filter results (e.g. 'emails', 'requests'). Returns all if omitted."),
+    capacity_request_factor: Optional[str] = Query(None, description="Fixed workload per unit. Plain number (e.g. '500') requires capacity_unit. JSON dict (e.g. '{\"emails\":500,\"MBs\":0.256}') sets multiple units at once."),
 ):
     yaml_data = load_yaml_source(request.datasheet_source)
     try:
@@ -176,7 +201,7 @@ def get_idle_time_period(
             yaml_data,
             _build_request(request, "idle_time_period", {}),
             capacity_unit=capacity_unit,
-            capacity_request_factor=_crf_dict(capacity_unit, capacity_request_factor),
+            capacity_request_factor=_parse_crf(capacity_unit, capacity_request_factor),
         )
         return DatasheetIdleTimePeriodResponse(
             results={
@@ -190,7 +215,7 @@ def get_idle_time_period(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/rates", response_model=DatasheetRatesResponse)
+@router.post("/rates", response_model=DatasheetRatesResponse, response_model_exclude_none=True)
 def get_rates(request: DatasheetBaseRequest):
     yaml_data = load_yaml_source(request.datasheet_source)
     try:
@@ -207,7 +232,7 @@ def get_rates(request: DatasheetBaseRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/quotas", response_model=DatasheetQuotasResponse)
+@router.post("/quotas", response_model=DatasheetQuotasResponse, response_model_exclude_none=True)
 def get_quotas(request: DatasheetBaseRequest):
     yaml_data = load_yaml_source(request.datasheet_source)
     try:
@@ -224,7 +249,7 @@ def get_quotas(request: DatasheetBaseRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/limits", response_model=DatasheetLimitsResponse)
+@router.post("/limits", response_model=DatasheetLimitsResponse, response_model_exclude_none=True)
 def get_limits(request: DatasheetBaseRequest):
     yaml_data = load_yaml_source(request.datasheet_source)
     try:

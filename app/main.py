@@ -4,6 +4,7 @@ from app.routers.bounded_rate.capacity_curves import router as capacity_curves_r
 from app.routers.datasheet.evaluate import router as datasheet_mcp_router
 from app.routers.datasheet.datasheet_operations import router as datasheet_router
 from app.routers.datasheet.capacity_curves import router as datasheet_curves_router
+from app.routers.datasheet.datasheet_navigation import router as datasheet_nav_router
 import uvicorn
 
 # 1. Instanciamos la aplicación pura
@@ -24,6 +25,7 @@ app.include_router(bounded_rate_router, prefix="/api/v1/bounded-rate", tags=["Bo
 app.include_router(capacity_curves_router, prefix="/api/v1/capacity-curves", tags=["Capacity Curves"])
 app.include_router(datasheet_router, prefix="/api/v1/datasheet", tags=["Datasheet"])
 app.include_router(datasheet_curves_router, prefix="/api/v1/datasheet/capacity-curves", tags=["Datasheet Capacity Curves"])
+app.include_router(datasheet_nav_router, prefix="/api/v1/datasheet/nav", tags=["Datasheet Navigation"])
 app.include_router(datasheet_mcp_router, prefix="/api/v1/datasheet/mcp", tags=["Datasheet MCP Server Tool"])
 
 def start_dev():

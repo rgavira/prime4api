@@ -90,8 +90,8 @@ def render_multi_curve_html(
     for s in series_list:
         plan    = s.get("plan", "default")
         ep      = s.get("endpoint", "endpoint")
-        alias   = s.get("alias", "default")
-        ep_key  = ep if alias == "default" else f"{ep} [{alias}]"
+        alias   = s.get("alias") or None
+        ep_key  = ep if not alias else f"{ep} [{alias}]"
         wl_unit = s.get("workload_unit")
         dim     = s["dimension"]
 

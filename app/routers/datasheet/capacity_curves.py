@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query, Response
 from typing import Optional
+import json
 
 from app.schemas.datasheet import DatasheetBaseRequest, DatasheetCurveSeries, DatasheetCurveDataResponse
 from app.schemas.datasheet import EvaluateDatasheetRequest
@@ -15,7 +16,7 @@ curve_service = CapacityCurveService()
 
 _CURVE_QUERY = dict(description="Time window for the curve (e.g. '1day', '1month')")
 _UNIT_QUERY  = dict(description="Filter to a single dimension (e.g. 'emails', 'requests'). Returns all if omitted.")
-_CRF_QUERY   = dict(description="Fixed workload value for capacity_unit. Returns worst/avg/best range if omitted.")
+_CRF_QUERY   = dict(description="Fixed workload per unit. Plain number (e.g. '500') requires capacity_unit. JSON dict (e.g. '{\"emails\":500,\"MBs\":0.256}') sets multiple units at once.")
 
 
 def _build_nav_request(base: DatasheetBaseRequest) -> EvaluateDatasheetRequest:
@@ -29,9 +30,26 @@ def _build_nav_request(base: DatasheetBaseRequest) -> EvaluateDatasheetRequest:
     )
 
 
-def _crf_dict(capacity_unit, capacity_request_factor):
-    if capacity_unit and capacity_request_factor is not None:
-        return {capacity_unit: capacity_request_factor}
+def _parse_crf(capacity_unit: Optional[str], capacity_request_factor: Optional[str]) -> Optional[dict]:
+    if not capacity_request_factor:
+        return None
+    try:
+        parsed = json.loads(capacity_request_factor)
+        if isinstance(parsed, dict):
+            return {k: float(v) for k, v in parsed.items()}
+        if isinstance(parsed, (int, float)) and capacity_unit:
+            return {capacity_unit: float(parsed)}
+        return None
+    except (json.JSONDecodeError, ValueError):
+        pass
+    try:
+        val = float(capacity_request_factor)
+        if capacity_unit:
+            return {capacity_unit: val}
+    except ValueError:
+        raise ValueError(
+            f"capacity_request_factor must be a number or a JSON dict, got: {capacity_request_factor!r}"
+        )
     return None
 
 
@@ -43,7 +61,7 @@ def _time_axis_params(time_interval: str):
 
 def _series_label(sc: dict) -> str:
     crf = f" | CRF={sc['crf']}" if sc["crf"] is not None else ""
-    alias = f" [{sc['alias']}]" if sc["alias"] != "default" else ""
+    alias = f" [{sc['alias']}]" if sc["alias"] else ""
     return f"{sc['plan']} / {sc['endpoint']}{alias} — {sc['dimension']}{crf}"
 
 
@@ -88,7 +106,7 @@ def _render_data(base, time_interval, capacity_unit, capacity_request_factor, cu
         yaml_data,
         _build_nav_request(base),
         capacity_unit=capacity_unit,
-        capacity_request_factor=_crf_dict(capacity_unit, capacity_request_factor),
+        capacity_request_factor=_parse_crf(capacity_unit, capacity_request_factor),
     )
 
     series = []
@@ -121,13 +139,13 @@ def _render_data(base, time_interval, capacity_unit, capacity_request_factor, cu
 # /data/*
 # ══════════════════════════════════════════════════════════════════════════════
 
-@router.post("/data/accumulated", response_model=DatasheetCurveDataResponse,
+@router.post("/data/accumulated", response_model=DatasheetCurveDataResponse, response_model_exclude_none=True,
              summary="Accumulated capacity curve — raw data points (datasheet)")
 def get_accumulated_data(
     request: DatasheetBaseRequest,
     time_interval: str = Query(..., **_CURVE_QUERY),
     capacity_unit: Optional[str] = Query(None, **_UNIT_QUERY),
-    capacity_request_factor: Optional[float] = Query(None, **_CRF_QUERY),
+    capacity_request_factor: Optional[str] = Query(None, **_CRF_QUERY),
 ):
     try:
         return _render_data(request, time_interval, capacity_unit, capacity_request_factor, "accumulated")
@@ -137,13 +155,13 @@ def get_accumulated_data(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/data/inflection", response_model=DatasheetCurveDataResponse,
+@router.post("/data/inflection", response_model=DatasheetCurveDataResponse, response_model_exclude_none=True,
              summary="Inflection point capacity curve — raw data points (datasheet)")
 def get_inflection_data(
     request: DatasheetBaseRequest,
     time_interval: str = Query(..., **_CURVE_QUERY),
     capacity_unit: Optional[str] = Query(None, **_UNIT_QUERY),
-    capacity_request_factor: Optional[float] = Query(None, **_CRF_QUERY),
+    capacity_request_factor: Optional[str] = Query(None, **_CRF_QUERY),
 ):
     try:
         return _render_data(request, time_interval, capacity_unit, capacity_request_factor, "inflection")
@@ -166,7 +184,7 @@ def get_accumulated_chart(
     request: DatasheetBaseRequest,
     time_interval: str = Query(..., **_CURVE_QUERY),
     capacity_unit: Optional[str] = Query(None, **_UNIT_QUERY),
-    capacity_request_factor: Optional[float] = Query(None, **_CRF_QUERY),
+    capacity_request_factor: Optional[str] = Query(None, **_CRF_QUERY),
 ):
     try:
         html = _render_chart(request, time_interval, capacity_unit, capacity_request_factor, "accumulated", "hv")
@@ -186,7 +204,7 @@ def get_inflection_chart(
     request: DatasheetBaseRequest,
     time_interval: str = Query(..., **_CURVE_QUERY),
     capacity_unit: Optional[str] = Query(None, **_UNIT_QUERY),
-    capacity_request_factor: Optional[float] = Query(None, **_CRF_QUERY),
+    capacity_request_factor: Optional[str] = Query(None, **_CRF_QUERY),
 ):
     try:
         html = _render_chart(request, time_interval, capacity_unit, capacity_request_factor, "inflection", "linear")
